@@ -19,7 +19,7 @@ interface ICheckInVerifier {
  * @dev 用于从基金会合约转移代币到奖励合约
  */
 interface IFoundationManage {
-    function transferTo(address to, uint256 amount) external;
+    function autoTransferTo(address to, uint256 amount) external;
 }
 
 /**
@@ -81,6 +81,13 @@ contract Reward is ReentrancyGuard, Pausable {
     /** @dev 总提取奖励数量 */
     uint256 public totalRewardsWithdrawn;
     
+    // ============ 提取限额 ============
+    /** @dev 最小提取金额 */
+    uint256 public minWithdrawAmount;
+    
+    /** @dev 最大单次提取金额 */
+    uint256 public maxWithdrawAmount;
+    
     // 取消日限额与内部签名机制
     
     // ============ 事件定义 ============
@@ -104,6 +111,9 @@ contract Reward is ReentrancyGuard, Pausable {
     
     /** @dev 批量活动奖励事件：当批量分发活动奖励时触发 */
     event ActivityBatchRewarded(uint256 indexed activityId, uint256 count, uint256 totalAmount);
+    
+    /** @dev 提取限额更新事件 */
+    event WithdrawLimitsUpdated(uint256 minAmount, uint256 maxAmount);
     
     modifier onlySafe() {
         require(msg.sender == governanceSafe, "Only Safe");
@@ -140,6 +150,20 @@ contract Reward is ReentrancyGuard, Pausable {
     // 仅限 Safe：紧急暂停/恢复
     function pause() external onlySafe { _pause(); }
     function unpause() external onlySafe { _unpause(); }
+    
+    /**
+     * @dev 设置提取限额（由 Safe 执行）
+     * @param _minAmount 最小提取金额（0 表示无限制）
+     * @param _maxAmount 最大单次提取金额（0 表示无限制）
+     */
+    function setWithdrawLimits(uint256 _minAmount, uint256 _maxAmount) external onlySafe {
+        if (_minAmount > 0 && _maxAmount > 0) {
+            require(_maxAmount >= _minAmount, "Max must be >= min");
+        }
+        minWithdrawAmount = _minAmount;
+        maxWithdrawAmount = _maxAmount;
+        emit WithdrawLimitsUpdated(_minAmount, _maxAmount);
+    }
     
     /**
      * @dev 设置用户奖励（由 Safe 执行）
@@ -244,6 +268,14 @@ contract Reward is ReentrancyGuard, Pausable {
      */
     function withdraw(uint256 _amount) external nonReentrant whenNotPaused {
         require(_amount > 0, "Amount must be greater than 0");
+        
+        // 检查提取限额
+        if (minWithdrawAmount > 0) {
+            require(_amount >= minWithdrawAmount, "Below minimum withdraw amount");
+        }
+        if (maxWithdrawAmount > 0) {
+            require(_amount <= maxWithdrawAmount, "Exceeds maximum withdraw amount");
+        }
         
         RewardInfo storage reward = userRewards[msg.sender];
         require(reward.totalAmount > reward.withdrawnAmount, "No rewards available");
@@ -360,7 +392,7 @@ contract Reward is ReentrancyGuard, Pausable {
         }
         if (need == 0) return;
         emit AutoTopUpRequested(foundationManager, need);
-        try IFoundationManage(foundationManager).transferTo(address(this), need) {
+        try IFoundationManage(foundationManager).autoTransferTo(address(this), need) {
         } catch {
         }
     }

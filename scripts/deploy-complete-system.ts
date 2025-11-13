@@ -43,7 +43,10 @@ async function main() {
         const meshesAddress = await deployMeshes(safeAddress);
         console.log("✅ Meshes合约部署完成:", meshesAddress);
 
-        const foundationManageAddress = await deployFoundationManage(safeAddress);
+        const treasuryAddress = await deployMeshesTreasury(safeAddress);
+        console.log("✅ MeshesTreasury合约部署完成:", treasuryAddress);
+
+        const foundationManageAddress = await deployFoundationManage(treasuryAddress);
         console.log("✅ FoundationManage合约部署完成:", foundationManageAddress);
 
         const rewardAddress = await deployReward(meshesAddress, foundationManageAddress, safeAddress);
@@ -173,13 +176,26 @@ async function deployMeshes(safeAddress: string): Promise<string> {
 }
 
 /**
+ * 部署MeshesTreasury合约
+ */
+async function deployMeshesTreasury(safeAddress: string): Promise<string> {
+    console.log("部署MeshesTreasury合约...");
+    
+    const MeshesTreasury = await ethers.getContractFactory("MeshesTreasury");
+    const treasury = await MeshesTreasury.deploy(safeAddress);
+    await treasury.deployed();
+    
+    return treasury.address;
+}
+
+/**
  * 部署FoundationManage合约
  */
-async function deployFoundationManage(safeAddress: string): Promise<string> {
+async function deployFoundationManage(treasuryAddress: string): Promise<string> {
     console.log("部署FoundationManage合约...");
     
     const FoundationManage = await ethers.getContractFactory("FoundationManage");
-    const foundationManage = await FoundationManage.deploy(safeAddress);
+    const foundationManage = await FoundationManage.deploy(treasuryAddress);
     await foundationManage.deployed();
     
     return foundationManage.address;

@@ -71,7 +71,14 @@ const config: any = {
   defaultNetwork: "hardhat",
   networks: {
     hardhat: {
-      accounts: hardhat_prikeys.length ? hardhat_prikeys : undefined,
+      accounts: hardhat_prikeys.length > 0 ? hardhat_prikeys : undefined,
+      // 确保有足够的默认账户用于测试
+      ...(!hardhat_prikeys.length && {
+        accounts: {
+          mnemonic: "test test test test test test test test test test test junk",
+          count: 20,
+        },
+      }),
     },
     bsctest: {
       url: "https://bsc-testnet.nodereal.io/v1/c92486b30c634586b6864cd4f4361440",

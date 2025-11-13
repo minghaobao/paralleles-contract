@@ -4,13 +4,14 @@ pragma solidity ^0.8.0;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/security/Pausable.sol";
 
 /**
  * @title IFoundationManage - 基金会管理接口
  * @dev 用于从基金会合约转移代币到质押合约
  */
 interface IFoundationManage {
-    function transferTo(address to, uint256 amount) external;
+    function autoTransferTo(address to, uint256 amount) external;
 }
 
 /**
@@ -38,7 +39,7 @@ interface IFoundationManage {
  * @author Parallels Team
  * @notice 本合约实现了固定期限的代币质押系统
  */
-contract Stake is ReentrancyGuard {
+contract Stake is ReentrancyGuard, Pausable {
     /**
      * @dev 用户质押信息结构体
      * @param term 质押天数
@@ -95,9 +96,17 @@ contract Stake is ReentrancyGuard {
     /** @dev 最低合约余额，低于该值则触发申请 */
     uint256 public minContractBalance;
     
+    // ============ 质押和提取限额 ============
+    /** @dev 最小质押金额 */
+    uint256 public minStakeAmount;
+    
+    /** @dev 最大质押金额 */
+    uint256 public maxStakeAmount;
+    
     mapping(address => StakeInfo) public userStakes;
     mapping(address => uint256) public userTotalEarned;
     mapping(address => uint256) public userTotalStaked;
+    mapping(address => bool) public hasStaked; // 追踪用户是否曾经质押过
     
     StakeStats public stakeStats;
     
@@ -112,6 +121,7 @@ contract Stake is ReentrancyGuard {
     event FoundationManagerUpdated(address indexed oldManager, address indexed newManager);
     event MinContractBalanceUpdated(uint256 oldValue, uint256 newValue);
     event AutoTopUpRequested(address indexed manager, uint256 requestedAmount);
+    event StakeLimitsUpdated(uint256 minAmount, uint256 maxAmount);
     
     // 仅 Safe 可执行管理操作
     modifier onlySafe() {
@@ -160,8 +170,17 @@ contract Stake is ReentrancyGuard {
      * @param _amount 质押金额
      * @param _term 质押天数
      */
-    function stake(uint256 _amount, uint256 _term) external nonReentrant {
+    function stake(uint256 _amount, uint256 _term) external nonReentrant whenNotPaused {
         require(_amount > 0, "Amount must be greater than 0");
+        
+        // 检查质押限额
+        if (minStakeAmount > 0) {
+            require(_amount >= minStakeAmount, "Below minimum stake amount");
+        }
+        if (maxStakeAmount > 0) {
+            require(_amount <= maxStakeAmount, "Exceeds maximum stake amount");
+        }
+        
         require(_term >= 1, "Term must be at least 1 day");
         require(_term <= 365, "Term cannot exceed 1 year");
         require(userStakes[msg.sender].amount == 0, "Active stake already exists");
@@ -187,7 +206,12 @@ contract Stake is ReentrancyGuard {
         userTotalStaked[msg.sender] += _amount;
         stakeStats.totalStaked += _amount;
         stakeStats.activeStakes++;
-        stakeStats.totalStakers++;
+        
+        // 只在用户首次质押时增加 totalStakers
+        if (!hasStaked[msg.sender]) {
+            hasStaked[msg.sender] = true;
+            stakeStats.totalStakers++;
+        }
         
         emit Staked(msg.sender, _amount, _term, maturityTs);
     }
@@ -195,7 +219,7 @@ contract Stake is ReentrancyGuard {
     /**
      * @dev 提取质押本金和利息
      */
-    function withdraw() external nonReentrant hasStake {
+    function withdraw() external nonReentrant whenNotPaused hasStake {
         StakeInfo storage userStake = userStakes[msg.sender];
         require(block.timestamp >= userStake.maturityTs, "Stake not matured yet");
         
@@ -224,7 +248,7 @@ contract Stake is ReentrancyGuard {
     /**
      * @dev 提前解除质押（需要支付手续费）
      */
-    function earlyWithdraw() external nonReentrant hasStake {
+    function earlyWithdraw() external nonReentrant whenNotPaused hasStake {
         StakeInfo storage userStake = userStakes[msg.sender];
         require(block.timestamp < userStake.maturityTs, "Stake already matured");
         
@@ -256,7 +280,7 @@ contract Stake is ReentrancyGuard {
     /**
      * @dev 领取利息（不解除质押）
      */
-    function claimInterest() external nonReentrant hasStake {
+    function claimInterest() external nonReentrant whenNotPaused hasStake {
         StakeInfo storage userStake = userStakes[msg.sender];
         uint256 interest = calculateInterest(msg.sender);
         require(interest > 0, "No interest to claim");
@@ -379,6 +403,34 @@ contract Stake is ReentrancyGuard {
         minContractBalance = _min;
     }
 
+    /**
+     * @dev 设置质押限额（仅限 Safe）
+     * @param _minAmount 最小质押金额（0 表示无限制）
+     * @param _maxAmount 最大质押金额（0 表示无限制）
+     */
+    function setStakeLimits(uint256 _minAmount, uint256 _maxAmount) external onlySafe {
+        if (_minAmount > 0 && _maxAmount > 0) {
+            require(_maxAmount >= _minAmount, "Max must be >= min");
+        }
+        minStakeAmount = _minAmount;
+        maxStakeAmount = _maxAmount;
+        emit StakeLimitsUpdated(_minAmount, _maxAmount);
+    }
+
+    /**
+     * @dev 暂停合约（仅限 Safe）
+     */
+    function pause() external onlySafe {
+        _pause();
+    }
+
+    /**
+     * @dev 恢复合约（仅限 Safe）
+     */
+    function unpause() external onlySafe {
+        _unpause();
+    }
+
     function _ensureTopUp(uint256 pendingPayout) internal {
         if (foundationManager == address(0)) return;
         uint256 bal = meshToken.balanceOf(address(this));
@@ -391,7 +443,7 @@ contract Stake is ReentrancyGuard {
         if (need == 0) return;
         emit AutoTopUpRequested(foundationManager, need);
         // 可选直接尝试调用（由治理预授权时可成功）
-        try IFoundationManage(foundationManager).transferTo(address(this), need) {
+        try IFoundationManage(foundationManager).autoTransferTo(address(this), need) {
         } catch {
             // 忽略失败，等待 Safe/Owner 执行
         }

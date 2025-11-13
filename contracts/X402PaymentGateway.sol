@@ -234,8 +234,10 @@ contract X402PaymentGateway is Ownable, ReentrancyGuard, Pausable {
         uint256 contractBalance = meshToken.balanceOf(address(foundationManage));
         require(contractBalance >= meshAmount + minReserveBalance, "Insufficient MESH reserve");
         
-        // 从FoundationManage转账MESH到用户
-        foundationManage.transferTo(_user, meshAmount);
+        // 从FoundationManage使用自动转账到用户
+        // 注意：X402PaymentGateway需要被设置为 approvedInitiator
+        // 并且用户需要被设置为 approvedAutoRecipient
+        foundationManage.autoTransferTo(_user, meshAmount);
         
         // 记录支付信息
         payments[paymentId] = PaymentInfo({
@@ -283,7 +285,7 @@ contract X402PaymentGateway is Ownable, ReentrancyGuard, Pausable {
         require(_users.length == _signatures.length, "Array length mismatch");
         
         for (uint256 i = 0; i < _users.length; i++) {
-            processPayment(
+            this.processPayment(
                 _users[i],
                 _stablecoinTokens[i],
                 _amounts[i],

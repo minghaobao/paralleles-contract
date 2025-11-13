@@ -4,7 +4,7 @@ import { ethers } from "hardhat";
 
 describe("Meshes.sol", function () {
   let meshes: any;
-  let foundation: any;
+  let treasury: any;
   let governanceSafe: any;
   let user1: any;
   let user2: any;
@@ -22,14 +22,16 @@ describe("Meshes.sol", function () {
     governanceSafe = signers[0];
     user1 = signers[1] || signers[0];
     user2 = signers[2] || signers[0];
-    foundation = signers[3] || signers[0];
+    treasury = signers[3] || signers[0];
 
     const MeshesF = await ethers.getContractFactory("Meshes");
     meshes = await MeshesF.connect(governanceSafe).deploy(
-      foundation.address,
       governanceSafe.address
     );
     await meshes.deployed();
+    
+    // Set treasury address to prevent "transfer to zero address" errors
+    await meshes.connect(governanceSafe).setTreasuryAddress(treasury.address);
   });
 
   async function expectRevert(p: Promise<any>, reasonIncludes: string) {
@@ -53,9 +55,9 @@ describe("Meshes.sol", function () {
 
   describe("Deployment", () => {
     it("sets constructor params", async () => {
-      expect(await meshes.FoundationAddr()).to.equal(foundation.address);
-      // governanceSafe not exposed via getter; check onlySafe gate with pause
-      await expectRevert(meshes.connect(user1).pause(), "Only Safe");
+      expect(await meshes.treasuryAddr()).to.equal(ethers.constants.AddressZero);
+      // governanceSafe not exposed via getter; check onlyGovernance gate with pause
+      await expectRevert(meshes.connect(user1).pause(), "Only Owner governance");
       await meshes.connect(governanceSafe).pause();
       expect(await meshes.paused()).to.equal(true);
       await meshes.connect(governanceSafe).unpause();
@@ -63,33 +65,33 @@ describe("Meshes.sol", function () {
     });
   });
 
-  describe("Access control (onlySafe)", () => {
+  describe("Access control (onlyGovernance)", () => {
     it("restricts admin calls to governanceSafe", async () => {
-      await expectRevert(meshes.connect(user1).pause(), "Only Safe");
+      await expectRevert(meshes.connect(user1).pause(), "Only Owner governance");
       await meshes.connect(governanceSafe).pause();
       await meshes.connect(governanceSafe).unpause();
 
       // setBurnScale replaces old switch; 0 disables, >0 enables scaling
-      await expectRevert(meshes.connect(user1).setBurnScale(1000), "Only Safe");
+      await expectRevert(meshes.connect(user1).setBurnScale(1000), "Only Owner governance");
       await meshes.connect(governanceSafe).setBurnScale(1000);
       expect((await meshes.burnScaleMilli()).toNumber ? (await meshes.burnScaleMilli()).toNumber() : await meshes.burnScaleMilli()).to.not.equal(0);
 
       await expectRevert(
-        meshes.connect(user1).setFoundationAddress(user1.address),
-        "Only Safe"
+        meshes.connect(user1).setTreasuryAddress(user1.address),
+        "Only Owner governance"
       );
-      await meshes.connect(governanceSafe).setFoundationAddress(user1.address);
-      expect(await meshes.FoundationAddr()).to.equal(user1.address);
+      await meshes.connect(governanceSafe).setTreasuryAddress(user1.address);
+      expect(await meshes.treasuryAddr()).to.equal(user1.address);
       // revert back for rest of tests
-      await meshes.connect(governanceSafe).setFoundationAddress(foundation.address);
+      await meshes.connect(governanceSafe).setTreasuryAddress(treasury.address);
 
       await expectRevert(
         meshes.connect(user1).setGovernanceSafe(user1.address),
-        "Only Safe"
+        "Only Owner governance"
       );
       await meshes.connect(governanceSafe).setGovernanceSafe(user1.address);
       // Now only user1 can call admin
-      await expectRevert(meshes.connect(governanceSafe).pause(), "Only Safe");
+      await expectRevert(meshes.connect(governanceSafe).pause(), "Only Owner governance");
       await meshes.connect(user1).pause();
       await meshes.connect(user1).unpause();
       // switch back to original to not affect other tests
@@ -210,7 +212,7 @@ describe("Meshes.sol", function () {
   });
 
   describe("Dashboards and views", () => {
-    it("getMeshData / getMeshDashboard / getEarthDashboard return sane values", async () => {
+    it("getMeshData / getMeshDashboard / getDashboard return sane values", async () => {
       await meshes.connect(user1).ClaimMesh("E50N50");
 
       const meshData = await meshes.getMeshData();
@@ -221,11 +223,11 @@ describe("Meshes.sol", function () {
       expectEqBN(dash.participants, 1);
       expectEqBN(dash.claimedMesh, 1);
 
-      const earth = await meshes.getEarthDashboard();
+      const dashboard = await meshes.getDashboard();
       const total = await meshes.totalSupply();
       const liquid = total.sub(await meshes.balanceOf(await meshes.address));
-      expectEqBN(earth._totalSupply, total);
-      expectEqBN(earth._liquidSupply, liquid);
+      expectEqBN(dashboard._totalSupply, total);
+      expectEqBN(dashboard._liquidSupply, liquid);
     });
 
     it("quoteClaimCost returns zero cost for first claim and >0 when heated", async () => {
@@ -256,22 +258,21 @@ describe("Meshes.sol", function () {
       // day 1
       await increaseTime(SECONDS_IN_DAY);
       await meshes.connect(user1).withdraw();
-      let cur = await meshes.getCurrentDayYear();
-      expectEqBN(cur.factor1e10, 1e10);
+      // Note: getCurrentDayYear function removed, testing withdrawal across multiple years
+      const balance1 = await meshes.balanceOf(user1.address);
+      expect(BigNumber.from(balance1).gt(0)).to.equal(true);
 
       // move to day 365 (add 364)
       await increaseTime(364 * SECONDS_IN_DAY);
       await meshes.connect(user1).withdraw();
-      cur = await meshes.getCurrentDayYear();
-      expectEqBN(cur.yearIndex, 1);
-      expectEqBN(cur.factor1e10, 9000000000); // 0.9 * 1e10
+      const balance2 = await meshes.balanceOf(user1.address);
+      expect(BigNumber.from(balance2).gt(balance1)).to.equal(true);
 
       // move to day 730 (another 365)
       await increaseTime(365 * SECONDS_IN_DAY);
       await meshes.connect(user1).withdraw();
-      cur = await meshes.getCurrentDayYear();
-      expectEqBN(cur.yearIndex, 2);
-      expectEqBN(cur.factor1e10, 8100000000); // 0.9^2 * 1e10
+      const balance3 = await meshes.balanceOf(user1.address);
+      expect(BigNumber.from(balance3).gt(balance2)).to.equal(true);
     });
 
     it("extreme coordinate boundaries", async () => {
@@ -313,9 +314,10 @@ describe("Meshes.sol", function () {
       expectEqBN(minted, expected);
     });
 
-    it("setFoundationAddress rejects zero and same address; setGovernanceSafe rejects invalid", async () => {
-      await expectRevert(meshes.connect(governanceSafe).setFoundationAddress("0x0000000000000000000000000000000000000000"), "Invalid foundation address");
-      await expectRevert(meshes.connect(governanceSafe).setFoundationAddress(await meshes.FoundationAddr()), "Same foundation address");
+    it("setTreasuryAddress rejects zero and same address; setGovernanceSafe rejects invalid", async () => {
+      // Treasury address already set in beforeEach
+      await expectRevert(meshes.connect(governanceSafe).setTreasuryAddress("0x0000000000000000000000000000000000000000"), "Invalid treasury address");
+      await expectRevert(meshes.connect(governanceSafe).setTreasuryAddress(await meshes.treasuryAddr()), "Same treasury address");
       await expectRevert(meshes.connect(governanceSafe).setGovernanceSafe("0x0000000000000000000000000000000000000000"), "Invalid safe");
       await expectRevert(meshes.connect(governanceSafe).setGovernanceSafe(governanceSafe.address), "Same safe");
     });

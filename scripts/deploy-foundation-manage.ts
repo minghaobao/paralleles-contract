@@ -23,26 +23,39 @@ async function main() {
   
   console.log("✅ 余额充足，开始部署...");
   
-  // 部署FoundationManage合约
-  // 使用部署者地址作为临时的governanceSafe地址
+  // 使用部署者地址作为临时的 Safe 地址
   const governanceSafeAddress = deployer.address;
   
-  console.log("\n=== 部署 FoundationManage 合约 ===");
+  console.log("\n=== 部署 MeshesTreasury 合约 ===");
   console.log("GovernanceSafe地址:", governanceSafeAddress);
   
+  // 先部署 MeshesTreasury
+  const MeshesTreasury = await ethers.getContractFactory("MeshesTreasury");
+  const treasury = await MeshesTreasury.connect(deployer).deploy(governanceSafeAddress);
+  await treasury.deployed();
+  
+  console.log("✅ MeshesTreasury合约部署完成!");
+  console.log("Treasury地址:", treasury.address);
+  
+  console.log("\n=== 部署 FoundationManage 合约 ===");
+  
+  // 部署 FoundationManage
   const FoundationManage = await ethers.getContractFactory("FoundationManage");
-  const foundationManage = await FoundationManage.connect(deployer).deploy(governanceSafeAddress);
+  const foundationManage = await FoundationManage.connect(deployer).deploy(treasury.address);
   await foundationManage.deployed();
   
   console.log("✅ FoundationManage合约部署完成!");
-  console.log("合约地址:", foundationManage.address);
+  console.log("FoundationManage地址:", foundationManage.address);
   
   // 验证部署
   try {
     const owner = await foundationManage.owner();
+    const treasuryAddress = await foundationManage.treasury();
     console.log("合约Owner:", owner);
+    console.log("Treasury地址:", treasuryAddress);
     console.log("部署者地址:", deployer.address);
     console.log("Owner验证:", owner.toLowerCase() === deployer.address.toLowerCase() ? "✅ 正确" : "❌ 错误");
+    console.log("Treasury验证:", treasuryAddress.toLowerCase() === treasury.address.toLowerCase() ? "✅ 正确" : "❌ 错误");
   } catch (error) {
     console.log("❌ 验证失败:", error);
   }
@@ -53,11 +66,17 @@ async function main() {
     timestamp: new Date().toISOString(),
     deployer: deployer.address,
     contracts: {
+      meshesTreasury: {
+        name: "MeshesTreasury",
+        address: treasury.address,
+        transactionHash: treasury.deployTransaction.hash,
+        governanceSafe: governanceSafeAddress
+      },
       foundationManage: {
         name: "FoundationManage",
         address: foundationManage.address,
         transactionHash: foundationManage.deployTransaction.hash,
-        governanceSafe: governanceSafeAddress
+        treasury: treasury.address
       }
     }
   };
@@ -75,9 +94,10 @@ async function main() {
   fs.writeFileSync(outputPath, JSON.stringify(deploymentInfo, null, 2));
   console.log("✅ 部署信息已保存到:", outputPath);
   
-  console.log("\n🎉 FoundationManage 合约部署完成!");
+  console.log("\n🎉 合约部署完成!");
   console.log("请将以下地址更新到 management 项目中:");
-  console.log(`BSC Testnet: ${foundationManage.address}`);
+  console.log(`MeshesTreasury (BSC Testnet): ${treasury.address}`);
+  console.log(`FoundationManage (BSC Testnet): ${foundationManage.address}`);
 }
 
 main()

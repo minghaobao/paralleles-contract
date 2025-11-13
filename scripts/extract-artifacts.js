@@ -4,12 +4,14 @@ const path = require('path');
 // 需要提取的合约列表
 const contracts = [
   'Meshes',
-  'FoundationManage', 
+  'FoundationManage',
+  'MeshesTreasury',
   'Reward',
   'Stake',
   'CheckInVerifier',
   'AutomatedExecutor',
-  'SafeManager'
+  'SafeManager',
+  'X402PaymentGateway'
 ];
 
 // 输出目录（修正到 deploy/management）

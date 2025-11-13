@@ -19,7 +19,7 @@ async function main() {
   console.log("正在部署 MESH 代币合约...");
   const Meshes = await ethers.getContractFactory("Meshes");
   
-  // 使用部署者地址作为初始所有者
+  // 使用部署者地址作为治理 Safe 地址（测试环境）
   const meshes = await Meshes.deploy(deployer.address);
   
   console.log("等待合约部署确认...");

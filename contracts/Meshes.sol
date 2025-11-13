@@ -116,8 +116,8 @@ contract Meshes is ERC20, ReentrancyGuard, Pausable, Ownable {
     uint256 public totalBurn;
 
     // ============ 地址配置 ============
-    /** @dev 基金会地址，接收部分代币分配 */
-    address public FoundationAddr;
+    /** @dev MeshesTreasury 地址，接收部分代币分配 */
+    address public treasuryAddr;
     
     /** @dev 治理安全地址（Gnosis Safe），用于管理合约 */
     address public governanceSafe;
@@ -129,11 +129,11 @@ contract Meshes is ERC20, ReentrancyGuard, Pausable, Ownable {
     /** @dev 治理模式切换锁定：一旦切换到Safe模式，无法回退到Owner模式 */
     bool public governanceLocked = false;
 
-    // ============ 基金会分配机制 ============
-    /** @dev 基金会待转池，累积待转给基金会的代币 */
-    uint256 public pendingFoundationPool;
+    // ============ Treasury 分配机制 ============
+    /** @dev Treasury 待转池，累积待转给 Treasury 的代币 */
+    uint256 public pendingTreasuryPool;
     
-    /** @dev 上次基金会转账的小时索引 */
+    /** @dev 上次 Treasury 转账的小时索引 */
     uint256 public lastPayoutHour;
     
     /** @dev 小时秒数常量 */
@@ -174,14 +174,14 @@ contract Meshes is ERC20, ReentrancyGuard, Pausable, Ownable {
     /** @dev 燃烧缩放比例更新事件：当燃烧成本调整时触发 */
     event BurnScaleUpdated(uint256 indexed oldMilli, uint256 indexed newMilli);
     
-    /** @dev 基金会地址更新事件：当基金会地址变更时触发 */
-    event FoundationAddressUpdated(address indexed oldAddress, address indexed newAddress);
+    /** @dev MeshesTreasury 地址更新事件：当 Treasury 地址变更时触发 */
+    event TreasuryAddressUpdated(address indexed oldAddress, address indexed newAddress);
     
-    /** @dev 基金会费用累积事件：当基金会费用累积时触发 */
-    event FoundationFeeAccrued(uint256 indexed amount, uint256 indexed time);
+    /** @dev Treasury 费用累积事件：当 Treasury 费用累积时触发 */
+    event TreasuryFeeAccrued(uint256 indexed amount, uint256 indexed time);
     
-    /** @dev 基金会转账事件：当基金会收到代币时触发 */
-    event FoundationPayout(uint256 indexed amount, uint256 indexed time);
+    /** @dev Treasury 转账事件：当 Treasury 收到代币时触发 */
+    event TreasuryPayout(uint256 indexed amount, uint256 indexed time);
     
     // ============ 开发者友好事件 ============
     /** @dev 网格认领事件：包含详细的认领信息，便于前端展示 */
@@ -203,7 +203,7 @@ contract Meshes is ERC20, ReentrancyGuard, Pausable, Ownable {
         address indexed user,      // 提取用户
         uint256 payout,           // 提取数量
         uint256 burned,           // 燃烧数量
-        uint256 foundation,       // 基金会分配
+        uint256 treasury,         // Treasury 分配
         uint256 carryAfter,       // 提取后结转余额
         uint256 dayIndex          // 日索引
     );
@@ -221,7 +221,7 @@ contract Meshes is ERC20, ReentrancyGuard, Pausable, Ownable {
         address indexed user,      // 用户地址
         uint256 daysProcessed,     // 处理的天数
         uint256 burned,           // 燃烧数量
-        uint256 foundation,       // 基金会分配
+        uint256 treasury,         // Treasury 分配
         uint256 carryAfter        // 处理后的结转余额
     );
     
@@ -301,8 +301,8 @@ contract Meshes is ERC20, ReentrancyGuard, Pausable, Ownable {
      * 2. 记录创世时间戳
      * 3. 配置治理地址
      * 4. 初始化日铸造因子
-     * 5. 设置基金会转账时间
-     * 6. FoundationAddr 初始化为 address(0)，后续通过 setFoundationAddress 设置
+     * 5. 设置 Treasury 转账时间
+     * 6. treasuryAddr 初始化为 address(0)，后续通过 setTreasuryAddress 设置
      */
     constructor(
         address _governanceSafe
@@ -314,14 +314,14 @@ contract Meshes is ERC20, ReentrancyGuard, Pausable, Ownable {
         
         // 设置治理地址
         governanceSafe = _governanceSafe;
-        // FoundationAddr 初始化为 address(0)，后续通过 setFoundationAddress 设置
-        FoundationAddr = address(0);
+        // treasuryAddr 初始化为 address(0)，后续通过 setTreasuryAddress 设置
+        treasuryAddr = address(0);
         
         // 初始化日因子为首日值（1e10 = 1.0，表示100%）
         dailyMintFactor = 1e10;
         lastUpdatedDay = 0;
         
-        // 设置基金会转账时间（按小时计算）
+        // 设置 Treasury 转账时间（按小时计算）
         lastPayoutHour = block.timestamp / HOUR_SECONDS;
     }
 
@@ -408,12 +408,12 @@ contract Meshes is ERC20, ReentrancyGuard, Pausable, Ownable {
     }
 
     /**
-     * @dev 更新基金会地址（仅限治理地址）
-     * @param _newFoundationAddr 新的基金会地址
+     * @dev 更新 MeshesTreasury 地址（仅限治理地址）
+     * @param _newTreasuryAddr 新的 MeshesTreasury 地址
      * 
      * 功能说明：
-     * - 更新接收代币分配的基金会地址
-     * - 基金会地址用于接收系统分配的部分代币
+     * - 更新接收代币分配的 MeshesTreasury 地址
+     * - Treasury 地址用于接收系统分配的部分代币
      * - 支持生态发展和项目运营
      * 
      * 安全特性：
@@ -426,38 +426,38 @@ contract Meshes is ERC20, ReentrancyGuard, Pausable, Ownable {
      * - Safe治理模式：需要白名单检查
      * - 事件记录：便于追踪地址变更
      */
-    function setFoundationAddress(
-        address _newFoundationAddr
+    function setTreasuryAddress(
+        address _newTreasuryAddr
     ) external onlyGovernance whenNotPaused {
-        require(_newFoundationAddr != address(0), "Invalid foundation address");
-        require(_newFoundationAddr != FoundationAddr, "Same foundation address");
+        require(_newTreasuryAddr != address(0), "Invalid treasury address");
+        require(_newTreasuryAddr != treasuryAddr, "Same treasury address");
         
-        address oldFoundation = FoundationAddr;
+        address oldTreasury = treasuryAddr;
         
         // 如果是首次设置（从 address(0) 设置），跳过白名单检查
-        if (FoundationAddr == address(0)) {
-            FoundationAddr = _newFoundationAddr;
-            emit FoundationAddressUpdated(oldFoundation, _newFoundationAddr);
+        if (treasuryAddr == address(0)) {
+            treasuryAddr = _newTreasuryAddr;
+            emit TreasuryAddressUpdated(oldTreasury, _newTreasuryAddr);
             return;
         }
         
         // 如果当前是Owner治理模式，允许Owner多次修改，无需白名单检查
         if (!isSafeGovernance) {
-            FoundationAddr = _newFoundationAddr;
-            emit FoundationAddressUpdated(oldFoundation, _newFoundationAddr);
+            treasuryAddr = _newTreasuryAddr;
+            emit TreasuryAddressUpdated(oldTreasury, _newTreasuryAddr);
             return;
         }
         
         // Safe治理模式下，后续修改需要白名单检查
-        require(_isApprovedByCurrentTreasury(_newFoundationAddr), "New foundation not approved by treasury");
-        FoundationAddr = _newFoundationAddr;
-        emit FoundationAddressUpdated(oldFoundation, _newFoundationAddr);
+        require(_isApprovedByCurrentTreasury(_newTreasuryAddr), "New treasury not approved by current treasury");
+        treasuryAddr = _newTreasuryAddr;
+        emit TreasuryAddressUpdated(oldTreasury, _newTreasuryAddr);
     }
 
-    // 仅用于只读校验：查询当前国库（若为合约且实现方法）对白名单的认可
+    // 仅用于只读校验：查询当前 Treasury（若为合约且实现方法）对白名单的认可
     function _isApprovedByCurrentTreasury(address candidate) internal view returns (bool) {
         bytes4 sel = bytes4(keccak256("isRecipientApproved(address)"));
-        (bool ok, bytes memory data) = FoundationAddr.staticcall(abi.encodeWithSelector(sel, candidate));
+        (bool ok, bytes memory data) = treasuryAddr.staticcall(abi.encodeWithSelector(sel, candidate));
         if (!ok || data.length == 0) return false;
         return abi.decode(data, (bool));
     }
@@ -705,8 +705,8 @@ contract Meshes is ERC20, ReentrancyGuard, Pausable, Ownable {
 
         //emit ClaimMint(msg.sender, _meshID, block.timestamp);
 
-        // 触发按小时基金会转出（用户发起，承担 gas）
-        _maybePayoutFoundation();
+        // 触发按小时 Treasury 转出（用户发起，承担 gas）
+        _maybePayoutTreasury();
     }
 
     function calculateDegreeHeat(uint256 _n) internal view returns (uint256) {
@@ -807,7 +807,7 @@ contract Meshes is ERC20, ReentrancyGuard, Pausable, Ownable {
 
         emit WithdrawProcessed(user, payout, 0, 0, carryBalance[user], dayIndex);
 
-        _maybePayoutFoundation();
+        _maybePayoutTreasury();
     }
 
     /**
@@ -838,23 +838,23 @@ contract Meshes is ERC20, ReentrancyGuard, Pausable, Ownable {
         return (canWithdraw, nextWithdrawTime);
     }
 
-    function _maybePayoutFoundation() private {
+    function _maybePayoutTreasury() private {
         uint256 currentHour = block.timestamp / HOUR_SECONDS;
-        if (currentHour > lastPayoutHour && pendingFoundationPool > 0) {
-            uint256 amount = pendingFoundationPool;
-            pendingFoundationPool = 0;
+        if (currentHour > lastPayoutHour && pendingTreasuryPool > 0) {
+            uint256 amount = pendingTreasuryPool;
+            pendingTreasuryPool = 0;
             lastPayoutHour = currentHour;
-            _transfer(address(this), FoundationAddr, amount);
-            emit FoundationPayout(amount, block.timestamp);
+            _transfer(address(this), treasuryAddr, amount);
+            emit TreasuryPayout(amount, block.timestamp);
         }
     }
 
-    // 任何人可发起的基金会出账触发器（无外部程序依赖，gas 由调用者承担）
-    function payoutFoundationIfDue() external nonReentrant whenNotPaused {
-        _maybePayoutFoundation();
+    // 任何人可发起的 Treasury 出账触发器（无外部程序依赖，gas 由调用者承担）
+    function payoutTreasuryIfDue() external nonReentrant whenNotPaused {
+        _maybePayoutTreasury();
     }
 
-    // 按天精确推进未领余额的“日衰减 50%”直至 upToDay-1
+    // 按天精确推进未领余额的"日衰减 50%"直至 upToDay-1
     function _applyUnclaimedDecay(address user, uint256 upToDay) private {
         uint256 fromDay = lastProcessedDay[user];
         if (fromDay >= upToDay) {
@@ -867,7 +867,7 @@ contract Meshes is ERC20, ReentrancyGuard, Pausable, Ownable {
         }
         uint256 daysProcessed = 0;
         uint256 burnedTotal = 0;
-        uint256 foundationTotal = 0;
+        uint256 treasuryTotal = 0;
         uint256 carry = carryBalance[user];
         for (uint256 d = fromDay; d < upToDay; d++) {
             uint256 factorD = _dailyMintFactorForDay(d);
@@ -875,10 +875,10 @@ contract Meshes is ERC20, ReentrancyGuard, Pausable, Ownable {
             uint256 Xd = carry + Rd;
             if (Xd > 0) {
                 uint256 burnD = (Xd * 40) / 100;
-                uint256 fundD = (Xd * 10) / 100;
-                carry = Xd - burnD - fundD; // 50% 结转
+                uint256 treasuryD = (Xd * 10) / 100;
+                carry = Xd - burnD - treasuryD; // 50% 结转
                 burnedTotal += burnD;
-                foundationTotal += fundD;
+                treasuryTotal += treasuryD;
             }
             daysProcessed++;
         }
@@ -888,14 +888,14 @@ contract Meshes is ERC20, ReentrancyGuard, Pausable, Ownable {
             totalBurn += burnedTotal;
             emit TokensBurned(burnedTotal, 2);
         }
-        if (foundationTotal > 0) {
-            mint(address(this), foundationTotal);
-            pendingFoundationPool += foundationTotal;
-            emit FoundationFeeAccrued(foundationTotal, block.timestamp);
+        if (treasuryTotal > 0) {
+            mint(address(this), treasuryTotal);
+            pendingTreasuryPool += treasuryTotal;
+            emit TreasuryFeeAccrued(treasuryTotal, block.timestamp);
         }
         carryBalance[user] = carry;
         lastProcessedDay[user] = upToDay - 1;
-        emit UnclaimedDecayApplied(user, daysProcessed, burnedTotal, foundationTotal, carry);
+        emit UnclaimedDecayApplied(user, daysProcessed, burnedTotal, treasuryTotal, carry);
     }
 
     function getMeshInfo(string calldata _meshID) external view returns (
@@ -938,7 +938,7 @@ contract Meshes is ERC20, ReentrancyGuard, Pausable, Ownable {
         uint256 carryBefore,
         uint256 carryAfterIfNoWithdraw,
         uint256 burnTodayIfNoWithdraw,
-        uint256 foundationTodayIfNoWithdraw,
+        uint256 treasuryTodayIfNoWithdraw,
         uint256 dayIndex
     ) {
         dayIndex = _currentDayIndex();
@@ -946,11 +946,11 @@ contract Meshes is ERC20, ReentrancyGuard, Pausable, Ownable {
         uint256 factor = _dailyMintFactorForDay(dayIndex);
         payoutToday = (factor * weight) / 1e10;
         carryBefore = carryBalance[_user];
-        // 严格按天的“若不提现”模拟：仅计算今天一次
+        // 严格按天的"若不提现"模拟：仅计算今天一次
         uint256 Xd = carryBefore + payoutToday;
         burnTodayIfNoWithdraw = (Xd * 40) / 100;
-        foundationTodayIfNoWithdraw = (Xd * 10) / 100;
-        carryAfterIfNoWithdraw = Xd - burnTodayIfNoWithdraw - foundationTodayIfNoWithdraw;
+        treasuryTodayIfNoWithdraw = (Xd * 10) / 100;
+        carryAfterIfNoWithdraw = Xd - burnTodayIfNoWithdraw - treasuryTodayIfNoWithdraw;
     }
 
     // ===================== Internal utils =====================
@@ -1033,15 +1033,15 @@ contract Meshes is ERC20, ReentrancyGuard, Pausable, Ownable {
             uint256 _totalSupply,
             uint256 _liquidSupply,
             uint256 _destruction,
-            uint256 _treasury,
-            uint256 _foundation
+            uint256 _pending,
+            uint256 _treasury
         )
     {
         _totalSupply = totalSupply();
         _liquidSupply = _totalSupply - balanceOf(address(this));
         _destruction = totalBurn;
-        _treasury = balanceOf(address(this));
-        _foundation = balanceOf(FoundationAddr);
+        _pending = balanceOf(address(this));
+        _treasury = balanceOf(treasuryAddr);
     }
 
     /**
