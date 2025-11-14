@@ -89,13 +89,13 @@ async function main() {
     console.log("Meshes代币符号:", meshTokenSymbol);
     
     // 验证Reward合约
-    const rewardFoundation = await reward.foundationAddr();
+    const rewardFoundation = await reward.foundationAddress();
     const rewardMeshToken = await reward.meshToken();
     console.log("Reward基金会地址:", rewardFoundation);
     console.log("Reward代币地址:", rewardMeshToken);
     
     // 验证Stake合约
-    const stakeFoundation = await stake.foundationAddr();
+    const stakeFoundation = await stake.foundationAddress();
     const stakeMeshToken = await stake.meshToken();
     const stakeAPY = await stake.apy();
     console.log("Stake基金会地址:", stakeFoundation);

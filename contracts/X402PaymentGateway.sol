@@ -65,7 +65,7 @@ contract X402PaymentGateway is Ownable, ReentrancyGuard, Pausable {
         address stablecoinToken;    // 稳定币合约地址（address(0)表示原生币）
         uint256 amount;             // 支付金额（稳定币单位）
         uint256 meshAmount;         // 分发的MESH数量
-        string meshId;              // 网格ID（可选，为空则不Claim）
+        string meshID;              // 网格ID（可选，为空则不Claim）
         uint256 timestamp;          // 支付时间戳
         bool claimed;               // 是否已Claim网格
         bool processed;             // 是否已处理
@@ -98,16 +98,13 @@ contract X402PaymentGateway is Ownable, ReentrancyGuard, Pausable {
 
     // ============ 系统配置 ============
     /** @dev 最小MESH分发数量（防止误操作） */
-    uint256 public minMeshAmount = 100 * 10**18; // 100 MESH
+    uint256 public constant MIN_MESH_AMOUNT = 100 * 10**18; // 100 MESH
     
     /** @dev 最大单笔支付MESH数量（风控） */
-    uint256 public maxMeshAmount = 1000000 * 10**18; // 1,000,000 MESH
-    
-    /** @dev 是否启用自动Claim功能 */
-    bool public autoClaimEnabled = true;
+    uint256 public constant MAX_MESH_AMOUNT = 1000000 * 10**18; // 1,000,000 MESH
     
     /** @dev 合约最小MESH余额阈值（低于此值暂停自动分发） */
-    uint256 public minReserveBalance = 10000 * 10**18; // 10,000 MESH
+    uint256 public constant MIN_RESERVE_BALANCE = 10000 * 10**18; // 10,000 MESH
 
     // ============ 事件定义 ============
     /**
@@ -150,15 +147,6 @@ contract X402PaymentGateway is Ownable, ReentrancyGuard, Pausable {
         bool enabled
     );
     
-    /**
-     * @dev 支付验证失败事件
-     */
-    event PaymentVerificationFailed(
-        bytes32 indexed paymentId,
-        address indexed user,
-        string reason
-    );
-
     // ============ 构造函数 ============
     constructor(
         address _meshToken,
@@ -227,12 +215,12 @@ contract X402PaymentGateway is Ownable, ReentrancyGuard, Pausable {
         uint256 meshAmount = (_amount * config.rate) / 10**18;
         
         // 检查MESH数量限制
-        require(meshAmount >= minMeshAmount, "Mesh amount too small");
-        require(meshAmount <= maxMeshAmount, "Mesh amount too large");
+        require(meshAmount >= MIN_MESH_AMOUNT, "Mesh amount too small");
+        require(meshAmount <= MAX_MESH_AMOUNT, "Mesh amount too large");
         
         // 检查合约MESH余额
         uint256 contractBalance = meshToken.balanceOf(address(foundationManage));
-        require(contractBalance >= meshAmount + minReserveBalance, "Insufficient MESH reserve");
+        require(contractBalance >= meshAmount + MIN_RESERVE_BALANCE, "Insufficient MESH reserve");
         
         // 从FoundationManage使用自动转账到用户
         // 注意：X402PaymentGateway需要被设置为 approvedInitiator
@@ -245,7 +233,7 @@ contract X402PaymentGateway is Ownable, ReentrancyGuard, Pausable {
             stablecoinToken: _stablecoinToken,
             amount: _amount,
             meshAmount: meshAmount,
-            meshId: _meshId,
+            meshID: _meshId,
             timestamp: _timestamp,
             claimed: false,
             processed: true
@@ -256,52 +244,16 @@ contract X402PaymentGateway is Ownable, ReentrancyGuard, Pausable {
         emit PaymentProcessed(paymentId, _user, _stablecoinToken, _amount, meshAmount, _meshId, _timestamp);
         emit MeshDistributed(paymentId, _user, meshAmount);
         
-        // 如果提供了网格ID且自动Claim已启用，自动执行Claim
-        if (autoClaimEnabled && bytes(_meshId).length > 0) {
-            try meshesContract.ClaimMesh(_meshId) {
-                payments[paymentId].claimed = true;
-                emit MeshClaimed(paymentId, _user, _meshId);
-            } catch {
-                // Claim失败不影响支付处理，用户稍后可手动Claim
-                emit PaymentVerificationFailed(paymentId, _user, "Auto claim failed");
-            }
-        }
-    }
-
-    /**
-     * @dev 批量处理支付（用于处理多个支付回调）
-     */
-    function batchProcessPayments(
-        address[] memory _users,
-        address[] memory _stablecoinTokens,
-        uint256[] memory _amounts,
-        string[] memory _meshIds,
-        uint256[] memory _nonces,
-        uint256[] memory _timestamps,
-        bytes[] memory _signatures
-    ) external nonReentrant whenNotPaused {
-        require(_users.length == _amounts.length, "Array length mismatch");
-        require(_users.length == _nonces.length, "Array length mismatch");
-        require(_users.length == _signatures.length, "Array length mismatch");
-        
-        for (uint256 i = 0; i < _users.length; i++) {
-            this.processPayment(
-                _users[i],
-                _stablecoinTokens[i],
-                _amounts[i],
-                _meshIds[i],
-                _nonces[i],
-                _timestamps[i],
-                _signatures[i]
-            );
-        }
     }
 
     // ============ 手动Claim函数 ============
     /**
-     * @dev 用户手动Claim网格（用于自动Claim失败的情况）
+     * @dev 用户手动Claim网格
+     * @notice 安全修复：用户必须自己调用 Meshes.claimMesh，确保网格归属正确
+     * @notice 此函数仅用于记录Claim状态，实际Claim由用户在前端调用 Meshes.claimMesh
      * @param _paymentId 支付ID
      * @param _meshId 网格ID
+     * @notice 用户应该直接调用 meshesContract.claimMesh(_meshId)，而不是通过此合约
      */
     function manualClaimMesh(bytes32 _paymentId, string memory _meshId) external nonReentrant whenNotPaused {
         PaymentInfo storage payment = payments[_paymentId];
@@ -310,11 +262,15 @@ contract X402PaymentGateway is Ownable, ReentrancyGuard, Pausable {
         require(!payment.claimed, "Mesh already claimed");
         require(bytes(_meshId).length > 0, "Mesh ID cannot be empty");
         
-        // 执行Claim
-        meshesContract.ClaimMesh(_meshId);
+        // 安全修复：不再通过合约调用 claimMesh
+        // 用户应该直接调用 meshesContract.claimMesh(_meshId)
+        // 这里仅记录状态，实际Claim由用户在前端完成
+        // 
+        // 注意：此函数已废弃，保留仅为向后兼容
+        // 建议用户直接调用 Meshes.claimMesh(_meshId)
         
         payment.claimed = true;
-        payment.meshId = _meshId;
+        payment.meshID = _meshId;
         
         emit MeshClaimed(_paymentId, msg.sender, _meshId);
     }
@@ -454,33 +410,8 @@ contract X402PaymentGateway is Ownable, ReentrancyGuard, Pausable {
         x402Verifier = _x402Verifier;
     }
     
-    /**
-     * @dev 设置最小MESH数量
-     */
-    function setMinMeshAmount(uint256 _minMeshAmount) external onlyOwner {
-        minMeshAmount = _minMeshAmount;
-    }
-    
-    /**
-     * @dev 设置最大MESH数量
-     */
-    function setMaxMeshAmount(uint256 _maxMeshAmount) external onlyOwner {
-        maxMeshAmount = _maxMeshAmount;
-    }
-    
-    /**
-     * @dev 设置最小储备余额
-     */
-    function setMinReserveBalance(uint256 _minReserveBalance) external onlyOwner {
-        minReserveBalance = _minReserveBalance;
-    }
-    
-    /**
-     * @dev 设置自动Claim开关
-     */
-    function setAutoClaimEnabled(bool _enabled) external onlyOwner {
-        autoClaimEnabled = _enabled;
-    }
+    // 注意：MIN_MESH_AMOUNT, MAX_MESH_AMOUNT, MIN_RESERVE_BALANCE 已改为常量，不再提供 setter 函数
+    // 如需修改，需要重新部署合约
     
     /**
      * @dev 暂停合约
@@ -507,4 +438,3 @@ contract X402PaymentGateway is Ownable, ReentrancyGuard, Pausable {
         }
     }
 }
-

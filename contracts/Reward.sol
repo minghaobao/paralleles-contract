@@ -15,14 +15,6 @@ interface ICheckInVerifier {
 }
 
 /**
- * @title IFoundationManage - 基金会管理接口
- * @dev 用于从基金会合约转移代币到奖励合约
- */
-interface IFoundationManage {
-    function autoTransferTo(address to, uint256 amount) external;
-}
-
-/**
  * @title Reward - 奖励分发合约
  * @dev 管理用户奖励的分配和提取，支持活动奖励和基础奖励
  * 
@@ -59,16 +51,13 @@ contract Reward is ReentrancyGuard, Pausable {
     IERC20 public meshToken;
     
     /** @dev 基金会地址（废弃路径，统一托管后不再作为提现来源） */
-    address public foundationAddr;
-    
-    /** @dev 基金会管理合约地址，用于代币转移 */
-    address public foundationManager;
+    address public foundationAddress;
     
     /** @dev 签到验证合约地址，用于验证用户资格 */
     ICheckInVerifier public checkInVerifier;
     
     /** @dev 治理安全地址（Gnosis Safe），用于管理操作 */
-    address public governanceSafe;
+    address public governanceSafeAddress;
     
     // ============ 用户数据映射 ============
     /** @dev 用户奖励信息：用户地址 => 奖励信息 */
@@ -100,8 +89,6 @@ contract Reward is ReentrancyGuard, Pausable {
     /** @dev 基金会地址更新事件：当基金会地址变更时触发 */
     event FoundationUpdated(address indexed oldFoundation, address indexed newFoundation);
     
-    /** @dev 基金会管理合约更新事件：当管理合约地址变更时触发 */
-    event FoundationManagerUpdated(address indexed oldManager, address indexed newManager);
     
     /** @dev 签到验证合约更新事件：当验证合约地址变更时触发 */
     event CheckInVerifierUpdated(address indexed oldVerifier, address indexed newVerifier);
@@ -116,26 +103,26 @@ contract Reward is ReentrancyGuard, Pausable {
     event WithdrawLimitsUpdated(uint256 minAmount, uint256 maxAmount);
     
     modifier onlySafe() {
-        require(msg.sender == governanceSafe, "Only Safe");
+        require(msg.sender == governanceSafeAddress, "Only Safe");
         _;
     }
 
     modifier onlyFoundation() {
-        require(msg.sender == foundationAddr, "Only foundation can call");
+        require(msg.sender == foundationAddress, "Only foundation can call");
         _;
     }
     
     constructor(
         address _meshToken,
-        address _foundationAddr,
-        address _governanceSafe
+        address _foundationAddress,
+        address _governanceSafeAddress
     ) {
         require(_meshToken != address(0), "Invalid mesh token address");
-        require(_foundationAddr != address(0), "Invalid foundation address");
-        require(_governanceSafe != address(0), "Invalid safe address");
+        require(_foundationAddress != address(0), "Invalid foundation address");
+        require(_governanceSafeAddress != address(0), "Invalid safe address");
         meshToken = IERC20(_meshToken);
-        foundationAddr = _foundationAddr;
-        governanceSafe = _governanceSafe;
+        foundationAddress = _foundationAddress;
+        governanceSafeAddress = _governanceSafeAddress;
     }
     
     /**
@@ -143,8 +130,8 @@ contract Reward is ReentrancyGuard, Pausable {
      */
     function setGovernanceSafe(address _safe) external onlySafe {
         require(_safe != address(0), "Invalid safe");
-        require(_safe != governanceSafe, "Same safe");
-        governanceSafe = _safe;
+        require(_safe != governanceSafeAddress, "Same safe");
+        governanceSafeAddress = _safe;
     }
     
     // 仅限 Safe：紧急暂停/恢复
@@ -209,8 +196,6 @@ contract Reward is ReentrancyGuard, Pausable {
         userRewards[user].totalAmount += amount;
         totalRewardsDistributed += amount;
         emit ActivityRewarded(activityId, user, amount);
-
-        _ensureTopUp(amount);
     }
 
     /**
@@ -234,7 +219,6 @@ contract Reward is ReentrancyGuard, Pausable {
         }
         totalRewardsDistributed += total;
         emit ActivityBatchRewarded(activityId, users.length, total);
-        _ensureTopUp(total);
     }
     
     /**
@@ -319,19 +303,12 @@ contract Reward is ReentrancyGuard, Pausable {
      */
     function updateFoundation(address _newFoundation) external onlySafe {
         require(_newFoundation != address(0), "Invalid foundation address");
-        require(_newFoundation != foundationAddr, "Same foundation address");
+        require(_newFoundation != foundationAddress, "Same foundation address");
         
-        address oldFoundation = foundationAddr;
-        foundationAddr = _newFoundation;
+        address oldFoundation = foundationAddress;
+        foundationAddress = _newFoundation;
         
         emit FoundationUpdated(oldFoundation, _newFoundation);
-    }
-
-    function setFoundationManager(address _manager) external onlySafe {
-        require(_manager != address(0), "Invalid manager");
-        address old = foundationManager;
-        foundationManager = _manager;
-        emit FoundationManagerUpdated(old, _manager);
     }
 
     function setCheckInVerifier(address _verifier) external onlySafe {
@@ -353,7 +330,7 @@ contract Reward is ReentrancyGuard, Pausable {
         _totalRewardsDistributed = totalRewardsDistributed;
         _totalRewardsWithdrawn = totalRewardsWithdrawn;
         _pendingRewards = totalRewardsDistributed - totalRewardsWithdrawn;
-        _safe = governanceSafe;
+        _safe = governanceSafeAddress;
     }
     
     /**
@@ -370,30 +347,6 @@ contract Reward is ReentrancyGuard, Pausable {
     }
 
 
-    // ============ 内部：余额不足时自动向 FoundationManage 申请补充 =========
-    uint256 public minFoundationBalance; // 低于该值则触发申请
-    event MinFoundationBalanceUpdated(uint256 oldValue, uint256 newValue);
-    event AutoTopUpRequested(address indexed manager, uint256 requestedAmount);
-
-    function setMinFoundationBalance(uint256 _min) external onlySafe {
-        emit MinFoundationBalanceUpdated(minFoundationBalance, _min);
-        minFoundationBalance = _min;
-    }
-
-    function _ensureTopUp(uint256 pendingNewRewards) internal {
-        if (foundationManager == address(0)) return;
-        uint256 bal = meshToken.balanceOf(address(this));
-        if (bal >= minFoundationBalance) return;
-        // 估算请求量：目标补至 minFoundationBalance 的 2 倍，至少覆盖 pendingNewRewards
-        uint256 target = minFoundationBalance * 2;
-        uint256 need = target > bal ? (target - bal) : 0;
-        if (need < pendingNewRewards) {
-            need = pendingNewRewards;
-        }
-        if (need == 0) return;
-        emit AutoTopUpRequested(foundationManager, need);
-        try IFoundationManage(foundationManager).autoTransferTo(address(this), need) {
-        } catch {
-        }
-    }
+    // ============ 补仓接口说明 =========
+    // 当前版本仅保留对 FoundationManage 的基础转账交互，补仓流程由后端/治理自助执行。
 }

@@ -177,7 +177,7 @@ async function main() {
         let claimType = pickOthers ? "🔄二次认领" : "🆕新网格";
         
         try {
-          const tx = await meshes.connect(user).ClaimMesh(id, { gasLimit: 900000 });
+          const tx = await meshes.connect(user).claimMesh(id, { gasLimit: 900000 });
           const rc = await tx.wait();
           gasUsed = rc.gasUsed;
           totalGasUsed = totalGasUsed.add(gasUsed);

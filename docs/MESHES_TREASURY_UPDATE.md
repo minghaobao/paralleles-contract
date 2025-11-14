@@ -245,7 +245,7 @@ const foundationAddr = await meshes.FoundationAddr();
 #### 新代码
 
 ```javascript
-const treasuryAddr = await meshes.treasuryAddr();
+const treasuryAddr = await meshes.treasuryAddress();
 ```
 
 ### 3. 设置 Treasury 地址

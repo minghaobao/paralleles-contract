@@ -63,11 +63,6 @@ contract FoundationManage is Ownable, ReentrancyGuard, Pausable {
     uint256 public globalAutoDayIndex;
     bool public autoGlobalEnabled;
     
-    // ============ 自动补充配置 ============
-    bool public autoRefillEnabled;
-    uint256 public lastRefillRequest;
-    uint256 public minRefillInterval = 1 hours;
-    
     // ============ 事件定义 ============
     event TreasuryUpdated(address indexed oldTreasury, address indexed newTreasury);
     event InitiatorApproved(address indexed initiator, bool approved);
@@ -81,10 +76,7 @@ contract FoundationManage is Ownable, ReentrancyGuard, Pausable {
     event HighBalanceWarning(address indexed foundationManage, uint256 currentBalance, uint256 maxBalance);
     
     // ============ 新增事件 ============
-    event RefillRequested(address indexed requester, uint256 requestedAmount, uint256 currentBalance);
     event EmergencyWithdraw(address indexed treasury, uint256 amount);
-    event AutoRefillConfigUpdated(bool enabled, uint256 minInterval);
-    event AutoTransferFailed(address indexed initiator, address indexed recipient, uint256 amount, string reason);
 
     constructor(address _treasury) {
         require(_treasury != address(0), "FoundationManage: invalid treasury");
@@ -161,17 +153,6 @@ contract FoundationManage is Ownable, ReentrancyGuard, Pausable {
         rlim.maxDaily = maxDaily;
         rlim.enabled = enabled;
         emit AutoRecipientLimitUpdated(to, maxPerTx, maxDaily, enabled);
-    }
-
-    /**
-     * @dev 设置自动补充配置（仅限 Owner）
-     * @param _enabled 是否启用自动补充
-     * @param _minInterval 最小补充间隔
-     */
-    function setAutoRefillConfig(bool _enabled, uint256 _minInterval) external onlyOwner {
-        autoRefillEnabled = _enabled;
-        minRefillInterval = _minInterval;
-        emit AutoRefillConfigUpdated(_enabled, _minInterval);
     }
 
     // ============ 查询接口 ============
@@ -306,10 +287,6 @@ contract FoundationManage is Ownable, ReentrancyGuard, Pausable {
         _checkAndEmitBalanceStatus(currentBalance);
         
         // 检查是否需要自动请求补充
-        if (autoRefillEnabled && currentBalance < minBalance) {
-            _tryRequestRefill();
-        }
-        
         emit AutoTransferExecuted(msg.sender, to, amount, bytes32(0));
     }
 
@@ -360,69 +337,11 @@ contract FoundationManage is Ownable, ReentrancyGuard, Pausable {
         _checkAndEmitBalanceStatus(currentBalance);
         
         // 检查是否需要自动请求补充
-        if (autoRefillEnabled && currentBalance < minBalance) {
-            _tryRequestRefill();
-        }
-        
         emit AutoTransferExecuted(msg.sender, to, amount, reasonId);
     }
 
     // ============ 自动补充机制 ============
     
-    /**
-     * @dev 请求从 Treasury 补充资金
-     * @param requestedAmount 请求金额（0表示自动计算）
-     */
-    function requestRefill(uint256 requestedAmount) external nonReentrant whenNotPaused {
-        uint256 currentBalance = meshToken.balanceOf(address(this));
-        require(currentBalance < minBalance, "FoundationManage: balance sufficient");
-        require(
-            block.timestamp >= lastRefillRequest + minRefillInterval,
-            "FoundationManage: refill interval not met"
-        );
-        
-        // 如果未指定金额，自动计算补充到 maxBalance
-        uint256 amount = requestedAmount;
-        if (amount == 0) {
-            amount = maxBalance - currentBalance;
-        }
-        
-        require(amount > 0, "FoundationManage: zero amount");
-        
-        lastRefillRequest = block.timestamp;
-        emit RefillRequested(msg.sender, amount, currentBalance);
-        
-        // 如果 Treasury 启用了自动平衡，尝试触发
-        if (treasury.autoBalanceEnabled()) {
-            try treasury.balanceFoundationManage() {
-                // 平衡成功
-            } catch {
-                // 平衡失败，只记录事件
-            }
-        }
-    }
-
-    /**
-     * @dev 内部函数：尝试请求补充
-     */
-    function _tryRequestRefill() private {
-        if (block.timestamp >= lastRefillRequest + minRefillInterval) {
-            uint256 currentBalance = meshToken.balanceOf(address(this));
-            uint256 amount = maxBalance - currentBalance;
-            
-            lastRefillRequest = block.timestamp;
-            emit RefillRequested(address(this), amount, currentBalance);
-            
-            if (treasury.autoBalanceEnabled()) {
-                try treasury.balanceFoundationManage() {
-                    // 平衡成功
-                } catch {
-                    // 平衡失败，继续执行
-                }
-            }
-        }
-    }
-
     // ============ 紧急提取机制 ============
     
     /**

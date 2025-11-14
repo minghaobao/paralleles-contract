@@ -91,7 +91,7 @@ describe("Random simulation: Meshes + Reward", function () {
       if (action === 0) {
         const id = genMesh();
         try {
-          await (await meshes.connect(u).ClaimMesh(id)).wait();
+          await (await meshes.connect(u).claimMesh(id)).wait();
           console.log(`R${r} claim by ${u.address} id=${id}`);
         } catch (e: any) {
           console.log(`R${r} claim failed(${u.address}): ${id} -> ${String(e.message).slice(0,60)}`);

@@ -8,16 +8,18 @@
 
 ### 支付流程
 
+**重要变更**: X402PaymentGateway 不再自动 Claim 网格，只负责分发 MESH 代币。
+
 ```
 用户 → 前端选择X402支付 → X402支付系统 → 支付完成 → 回调合约 → 
-自动分发MESH → 自动Claim网格 → 完成
+分发MESH → 用户手动Claim网格 → 完成
 ```
 
 ### 关键组件
 
-1. **X402PaymentGateway合约**：处理支付回调，分发MESH，执行Claim
+1. **X402PaymentGateway合约**：处理支付回调，分发MESH（**不再自动Claim**）
 2. **FoundationManage合约**：管理MESH代币储备
-3. **Meshes合约**：执行Claim操作
+3. **Meshes合约**：用户手动执行Claim操作
 4. **X402支付系统**：处理稳定币支付
 
 ## 部署步骤
@@ -436,7 +438,7 @@ gateway.on('MeshClaimed', (paymentId, user, meshId, event) => {
 
 ### 1. 自动Claim失败
 
-如果自动Claim失败，用户可以调用`manualClaimMesh`手动Claim：
+如果自动Claim失败，用户可以调用`manualClaimMesh`手动Claim（已废弃，建议直接调用`Meshes.claimMesh()`）：
 
 ```solidity
 await gateway.manualClaimMesh(paymentId, meshId);
@@ -456,14 +458,46 @@ await gateway.manualClaimMesh(paymentId, meshId);
 - 调整`minReserveBalance`
 - 暂停自动分发直到补充完成
 
+## 重要变更说明
+
+### X402 不再自动 Claim
+
+**变更日期**: 2025-11-13
+
+X402PaymentGateway 合约已更新，**不再自动执行 Claim 操作**。支付完成后，用户需要手动 Claim 网格。
+
+#### 变更原因
+- 简化合约逻辑，降低复杂度
+- 提高安全性，减少潜在风险
+- 给用户更多控制权
+
+#### 影响
+- 支付完成后，MESH 会分发到用户钱包
+- 用户需要手动调用 Meshes 合约的 `claimMesh()`（`manualClaimMesh()` 已废弃）
+- 前端需要更新，提示用户 Claim 操作
+
+#### 前端集成更新
+```javascript
+// 支付完成后的处理
+async function onPaymentCompleted(paymentId) {
+  // 1. 显示支付成功消息
+  toast.success('支付成功！MESH 已到账');
+  
+  // 2. 提示用户 Claim 网格
+  toast.info('请点击下方按钮 Claim 网格');
+  
+  // 3. 显示 Claim 按钮或跳转到 Claim 页面
+  showClaimButton(meshId);
+}
+```
+
 ## 总结
 
 X402PaymentGateway合约实现了：
 ✅ 支付验证和安全处理
-✅ 自动MESH分发
-✅ 自动Claim网格
+✅ MESH分发（不再自动Claim）
 ✅ 多种稳定币支持
 ✅ 完整的支付记录和查询
 
-集成后，用户可以通过稳定币支付轻松获得MESH并完成Claim操作，大大简化了使用流程。
+**注意**: 用户需要在支付完成后手动 Claim 网格。前端应提供清晰的 Claim 操作指引。
 

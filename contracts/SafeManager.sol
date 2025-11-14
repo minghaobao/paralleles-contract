@@ -40,6 +40,9 @@ contract SafeManager is Ownable, ReentrancyGuard, Pausable {
     /** @dev Gnosis Safe多签钱包地址 */
     address public safeAddress;
     
+    /** @dev 可信任执行者地址（如 AutomatedExecutor 或 Automation Safe） */
+    mapping(address => bool) public trustedExecutors;
+    
     // ============ 操作类型枚举 ============
     /**
      * @dev 操作类型枚举，定义支持的所有操作类型
@@ -83,6 +86,7 @@ contract SafeManager is Ownable, ReentrancyGuard, Pausable {
     
     // 事件
     event SafeAddressUpdated(address indexed oldSafe, address indexed newSafe);
+    event TrustedExecutorUpdated(address indexed executor, bool trusted);
     event OperationProposed(
         bytes32 indexed operationId,
         OperationType opType,
@@ -94,7 +98,7 @@ contract SafeManager is Ownable, ReentrancyGuard, Pausable {
     
     // 修饰符
     modifier onlySafe() {
-        require(msg.sender == safeAddress, "SafeManager: Only Safe can call");
+        require(msg.sender == safeAddress || trustedExecutors[msg.sender], "SafeManager: Only Safe or trusted executor can call");
         _;
     }
     
@@ -124,6 +128,18 @@ contract SafeManager is Ownable, ReentrancyGuard, Pausable {
         safeAddress = _newSafeAddress;
         
         emit SafeAddressUpdated(oldSafe, _newSafeAddress);
+    }
+    
+    /**
+     * @dev 设置可信任执行者（仅限Safe）
+     * @notice 允许 Safe 自己通过 Safe App 触发 executeOperation，或添加 AutomatedExecutor/Automation Safe
+     * @param _executor 执行者地址
+     * @param _trusted 是否信任
+     */
+    function setTrustedExecutor(address _executor, bool _trusted) external onlySafe {
+        require(_executor != address(0), "SafeManager: Invalid executor address");
+        trustedExecutors[_executor] = _trusted;
+        emit TrustedExecutorUpdated(_executor, _trusted);
     }
     
     /**
@@ -203,117 +219,4 @@ contract SafeManager is Ownable, ReentrancyGuard, Pausable {
     /**
      * @dev 获取操作信息
      */
-    function getOperation(bytes32 _operationId) 
-        external 
-        view 
-        returns (
-            OperationType opType,
-            address target,
-            bytes memory data,
-            uint256 timestamp,
-            bool executed,
-            string memory description
-        ) 
-    {
-        Operation memory operation = operations[_operationId];
-        return (
-            operation.opType,
-            operation.target,
-            operation.data,
-            operation.timestamp,
-            operation.executed,
-            operation.description
-        );
-    }
-    
-    /**
-     * @dev 检查操作是否有效
-     */
-    function isValidOperation(bytes32 _operationId) external view returns (bool) {
-        Operation memory operation = operations[_operationId];
-        return operation.timestamp > 0 && !operation.executed;
-    }
-    
-    /**
-     * @dev 获取操作计数
-     */
-    function getOperationCount() external view returns (uint256) {
-        return operationCount;
-    }
-    
-    /**
-     * @dev 紧急暂停（仅限Safe）
-     */
-    function emergencyPause() external onlySafe {
-        _pause();
-    }
-    
-    /**
-     * @dev 紧急恢复（仅限Safe）
-     */
-    function emergencyResume() external onlySafe {
-        _unpause();
-    }
-    
-    /**
-     * @dev 批量执行操作
-     */
-    function batchExecuteOperations(bytes32[] calldata _operationIds) 
-        external 
-        onlySafe 
-        nonReentrant 
-        returns (bool[] memory successes, bytes[] memory returnDatas) 
-    {
-        uint256 length = _operationIds.length;
-        successes = new bool[](length);
-        returnDatas = new bytes[](length);
-        
-        for (uint256 i = 0; i < length; i++) {
-            bytes32 operationId = _operationIds[i];
-            
-            if (operations[operationId].timestamp > 0 && !operations[operationId].executed) {
-                Operation storage operation = operations[operationId];
-                
-                (bool success, bytes memory returnData) = operation.target.call(operation.data);
-                
-                if (success) {
-                    operation.executed = true;
-                    emit OperationExecuted(operationId);
-                }
-                
-                successes[i] = success;
-                returnDatas[i] = returnData;
-            } else {
-                successes[i] = false;
-            }
-        }
-    }
-    
-    /**
-     * @dev 获取待执行操作列表
-     */
-    function getPendingOperations(uint256 _startIndex, uint256 _endIndex) 
-        external 
-        view 
-        returns (bytes32[] memory pendingIds, Operation[] memory pendingOps) 
-    {
-        require(_startIndex < _endIndex, "SafeManager: Invalid index range");
-        require(_endIndex <= operationCount, "SafeManager: Index out of range");
-        
-        uint256 count = _endIndex - _startIndex;
-        pendingIds = new bytes32[](count);
-        pendingOps = new Operation[](count);
-        
-        uint256 pendingCount = 0;
-        for (uint256 i = _startIndex; i < _endIndex; i++) {
-            // 这里需要遍历所有操作来找到待执行的
-            // 实际实现中可能需要维护一个待执行操作列表
-        }
-        
-        // 调整数组大小
-        assembly {
-            mstore(pendingIds, pendingCount)
-            mstore(pendingOps, pendingCount)
-        }
-    }
 }

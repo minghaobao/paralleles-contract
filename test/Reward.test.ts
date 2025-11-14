@@ -44,6 +44,9 @@ describe("Reward.sol", function () {
       expect(String(e.message)).to.include("Only Safe");
     }
 
+    // 先给 Reward 合约充值，确保有足够余额
+    await token.mint(reward.address, ethers.utils.parseEther("200"));
+
     await reward
       .connect(governanceSafe)
       .setUserReward([user1.address, user2.address], [ethers.utils.parseEther("100"), ethers.utils.parseEther("50")], ethers.utils.parseEther("150"));
@@ -66,8 +69,7 @@ describe("Reward.sol", function () {
     const info = await reward.getRewardAmount(user1.address);
     expect(info.totalAmount.eq(ethers.utils.parseEther("3"))).to.equal(true);
 
-    // batch path and auto top-up trigger path
-    await reward.connect(governanceSafe).setMinFoundationBalance(ethers.utils.parseEther("1000000"));
+    // batch path
     await reward.connect(governanceSafe).rewardActivityWinnersBatch(2, [user2.address], [ethers.utils.parseEther("5")]);
     const info2 = await reward.getRewardAmount(user2.address);
     expect(info2.totalAmount.eq(ethers.utils.parseEther("5"))).to.equal(true);

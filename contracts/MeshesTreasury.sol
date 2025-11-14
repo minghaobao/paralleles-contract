@@ -72,8 +72,6 @@ contract MeshesTreasury is Ownable, ReentrancyGuard, Pausable {
     /** @dev 转账执行事件：记录调用发起者、收款方、金额与原因ID */
     event TransferExecuted(address indexed initiator, address indexed to, uint256 amount, bytes32 reasonId);
     
-    /** @dev 余额平衡事件：记录平衡操作的结果 */
-    event BalanceBalanced(address indexed foundationManage, uint256 treasuryBalance, uint256 foundationBalance, uint256 transferredAmount);
     
     /** @dev 治理模式切换事件：当治理模式变更时触发 */
     event GovernanceModeSwitched(bool indexed isSafeGovernance, address indexed caller, uint256 timestamp);
@@ -254,36 +252,6 @@ contract MeshesTreasury is Ownable, ReentrancyGuard, Pausable {
     }
 
     /**
-     * @dev 紧急从 FoundationManage 提取资金（仅限 Safe 执行）
-     * @param amount 提取金额（0 表示提取全部）
-     * 
-     * 功能说明：
-     * - 紧急情况下，Safe 可以从 FoundationManage 提取资金回 Treasury
-     * - 用于应对 FoundationManage 被攻击或配置错误的情况
-     * - 需要 FoundationManage 预先授权 Treasury 可以提取资金
-     * 
-     * 注意：此功能需要 FoundationManage 实现相应的授权机制
-     */
-    function emergencyWithdrawFromFoundation(uint256 amount) external onlySafeExec nonReentrant whenNotPaused {
-        require(foundationManage != address(0), "MeshesTreasury: foundation manage not set");
-        
-        uint256 foundationBalance = meshToken.balanceOf(foundationManage);
-        require(foundationBalance > 0, "MeshesTreasury: foundation has no balance");
-        
-        uint256 withdrawAmount = amount == 0 ? foundationBalance : amount;
-        require(withdrawAmount <= foundationBalance, "MeshesTreasury: insufficient foundation balance");
-        
-        // 注意：这需要 FoundationManage 实现紧急提取函数
-        // 调用 FoundationManage 的 emergencyWithdrawToTreasury 函数
-        (bool success, ) = foundationManage.call(
-            abi.encodeWithSignature("emergencyWithdrawToTreasury(uint256)", withdrawAmount)
-        );
-        require(success, "Emergency withdraw failed");
-        
-        emit TransferExecuted(msg.sender, foundationManage, withdrawAmount, bytes32("EMERGENCY_WITHDRAW"));
-    }
-
-    /**
      * @dev 获取合约余额
      * @return 合约持有的 Mesh 代币余额
      */
@@ -292,25 +260,9 @@ contract MeshesTreasury is Ownable, ReentrancyGuard, Pausable {
     }
 
     /** @dev 是否启用自动平衡功能 */
-    bool public autoBalanceEnabled;
     
-    /** @dev 自动平衡的最小差额阈值，低于此值不执行平衡 */
-    uint256 public autoBalanceThreshold;
-    
-    /** @dev 上次执行平衡的时间戳 */
-    uint256 public lastBalanceTimestamp;
-    
-    /** @dev 自动平衡的最小时间间隔（防止滥用） */
-    uint256 public minBalanceInterval = 1 hours;
-    
-    /** @dev Treasury 和 Foundation 的余额比例（1-100，表示 Treasury 占总余额的百分比） */
+    /** @dev 财务比例（Treasury 占总余额的百分比） */
     uint256 public balanceRatio = 50; // 默认 50:50
-    
-    /** @dev 自动平衡事件 */
-    event AutoBalanceEnabledUpdated(bool enabled);
-    event AutoBalanceThresholdUpdated(uint256 threshold);
-    event MinBalanceIntervalUpdated(uint256 interval);
-    event BalanceRatioUpdated(uint256 ratio);
 
     /**
      * @dev 设置自动平衡功能（仅限 Safe）
@@ -327,33 +279,6 @@ contract MeshesTreasury is Ownable, ReentrancyGuard, Pausable {
      * - 70: Treasury 占 70%，Foundation 占 30%
      * - 30: Treasury 占 30%，Foundation 占 70%
      */
-    function setAutoBalance(bool _enabled, uint256 _threshold, uint256 _ratio) external onlySafeExec whenNotPaused {
-        require(_ratio >= 1 && _ratio <= 100, "MeshesTreasury: ratio must be 1-100");
-        
-        autoBalanceEnabled = _enabled;
-        autoBalanceThreshold = _threshold;
-        balanceRatio = _ratio;
-        
-        emit AutoBalanceEnabledUpdated(_enabled);
-        emit AutoBalanceThresholdUpdated(_threshold);
-        emit BalanceRatioUpdated(_ratio);
-    }
-
-    /**
-     * @dev 设置最小平衡间隔（仅限 Safe）
-     * @param _interval 最小时间间隔（秒）
-     * 
-     * 功能说明：
-     * - 设置自动平衡的最小时间间隔
-     * - 这是关键配置，必须通过 Safe 多签授权
-     */
-    function setMinBalanceInterval(uint256 _interval) external onlySafeExec whenNotPaused {
-        require(_interval >= 10 minutes, "MeshesTreasury: interval too short");
-        require(_interval <= 7 days, "MeshesTreasury: interval too long");
-        minBalanceInterval = _interval;
-        emit MinBalanceIntervalUpdated(_interval);
-    }
-
     /**
      * @dev 平衡 Treasury 和 FoundationManage 的 MESH 余额
      * @dev 根据设定的比例调整余额，使 Treasury 和 FoundationManage 的余额符合设定的比例
@@ -376,60 +301,22 @@ contract MeshesTreasury is Ownable, ReentrancyGuard, Pausable {
      *   - 转账后：treasuryBalance' ≈ targetTreasuryBalance, foundationBalance' ≈ targetFoundationBalance
      */
     function balanceFoundationManage() external nonReentrant whenNotPaused {
-        // 权限检查：Safe 可以随时调用，其他人需要启用自动平衡并满足时间间隔
-        if (msg.sender != safeAddress) {
-            require(autoBalanceEnabled, "MeshesTreasury: auto balance disabled");
-            require(
-                block.timestamp >= lastBalanceTimestamp + minBalanceInterval,
-                "MeshesTreasury: balance interval not met"
-            );
-        }
-        
         require(foundationManage != address(0), "MeshesTreasury: foundation manage not set");
         require(approvedRecipients[foundationManage], "MeshesTreasury: foundation manage not approved");
-        
+
         uint256 treasuryBalance = meshToken.balanceOf(address(this));
         uint256 foundationBalance = meshToken.balanceOf(foundationManage);
         uint256 totalBalance = treasuryBalance + foundationBalance;
-        
-        // 计算目标余额：Treasury 应该占总余额的 balanceRatio%
+
         uint256 targetTreasuryBalance = (totalBalance * balanceRatio) / 100;
-        
-        // 如果 Treasury 余额已经小于等于目标余额，不需要转账
+
         if (treasuryBalance <= targetTreasuryBalance) {
-            emit BalanceBalanced(foundationManage, treasuryBalance, foundationBalance, 0);
             return;
         }
-        
-        // 计算需要转账的金额
+
         uint256 transferAmount = treasuryBalance - targetTreasuryBalance;
-        
-        // 检查是否达到自动平衡阈值
-        if (msg.sender != safeAddress && transferAmount < autoBalanceThreshold) {
-            emit BalanceBalanced(foundationManage, treasuryBalance, foundationBalance, 0);
-            return;
-        }
-        
-        // 如果转账金额为0，不需要转账
-        if (transferAmount == 0) {
-            emit BalanceBalanced(foundationManage, treasuryBalance, foundationBalance, 0);
-            return;
-        }
-        
-        // 检查 Treasury 余额是否足够
-        require(treasuryBalance >= transferAmount, "MeshesTreasury: insufficient balance");
-        
-        // 执行转账
+
         require(meshToken.transfer(foundationManage, transferAmount), "ERC20 transfer failed");
-        
-        // 更新时间戳
-        lastBalanceTimestamp = block.timestamp;
-        
-        // 获取转账后的余额
-        uint256 newTreasuryBalance = meshToken.balanceOf(address(this));
-        uint256 newFoundationBalance = meshToken.balanceOf(foundationManage);
-        
-        emit BalanceBalanced(foundationManage, newTreasuryBalance, newFoundationBalance, transferAmount);
     }
 
     /**
@@ -499,4 +386,3 @@ contract MeshesTreasury is Ownable, ReentrancyGuard, Pausable {
         _currentGovernance = isSafeGovernance ? safeAddress : owner();
     }
 }
-

@@ -25,9 +25,7 @@ describe("Meshes.sol", function () {
     treasury = signers[3] || signers[0];
 
     const MeshesF = await ethers.getContractFactory("Meshes");
-    meshes = await MeshesF.connect(governanceSafe).deploy(
-      governanceSafe.address
-    );
+    meshes = await MeshesF.connect(governanceSafe).deploy(governanceSafe.address);
     await meshes.deployed();
     
     // Set treasury address to prevent "transfer to zero address" errors
@@ -55,7 +53,7 @@ describe("Meshes.sol", function () {
 
   describe("Deployment", () => {
     it("sets constructor params", async () => {
-      expect(await meshes.treasuryAddr()).to.equal(ethers.constants.AddressZero);
+      expect(await meshes.treasuryAddress()).to.equal(ethers.constants.AddressZero);
       // governanceSafe not exposed via getter; check onlyGovernance gate with pause
       await expectRevert(meshes.connect(user1).pause(), "Only Owner governance");
       await meshes.connect(governanceSafe).pause();
@@ -81,7 +79,7 @@ describe("Meshes.sol", function () {
         "Only Owner governance"
       );
       await meshes.connect(governanceSafe).setTreasuryAddress(user1.address);
-      expect(await meshes.treasuryAddr()).to.equal(user1.address);
+      expect(await meshes.treasuryAddress()).to.equal(user1.address);
       // revert back for rest of tests
       await meshes.connect(governanceSafe).setTreasuryAddress(treasury.address);
 
@@ -114,42 +112,42 @@ describe("Meshes.sol", function () {
     });
   });
 
-  describe("ClaimMesh", () => {
+  describe("claimMesh", () => {
     it("reverts when paused", async () => {
       await meshes.connect(governanceSafe).pause();
       await expectRevert(
-        meshes.connect(user1).ClaimMesh("E10N10"),
+        meshes.connect(user1).claimMesh("E10N10"),
         "paused"
       );
     });
 
     it("claims first time and updates state/events", async () => {
       const meshID = "E10N10";
-      const tx = await meshes.connect(user1).ClaimMesh(meshID);
+      const tx = await meshes.connect(user1).claimMesh(meshID);
       const rc = await tx.wait();
       expectEvent(rc, "MeshClaimed");
 
       // active minters and meshes increment
-      expectEqBN(await meshes.activeMinters(), 1);
+      expectEqBN(await meshes.activeClaimers(), 1);
       expectEqBN(await meshes.activeMeshes(), 1);
-      expectEqBN(await meshes.claimMints(), 1);
+      expectEqBN(await meshes.totalClaimMints(), 1);
 
       // duplicate by same user should revert
-      await expectRevert(meshes.connect(user1).ClaimMesh(meshID), "Already claim");
+      await expectRevert(meshes.connect(user1).claimMesh(meshID), "Already claim");
 
       // another user can claim same mesh (no burn when burnSwitch=false)
-      await meshes.connect(user2).ClaimMesh(meshID);
-      expectEqBN(await meshes.claimMints(), 2);
+      await meshes.connect(user2).claimMesh(meshID);
+      expectEqBN(await meshes.totalClaimMints(), 2);
     });
 
     it("burn scale: second claimant requires token to burn", async () => {
       const meshID = "E20N20";
       // First claimant creates heat
-      await meshes.connect(user1).ClaimMesh(meshID);
+      await meshes.connect(user1).claimMesh(meshID);
       await meshes.connect(governanceSafe).setBurnScale(1000);
       // Second claimant without tokens should fail due to burn requirement
       await expectRevert(
-        meshes.connect(user2).ClaimMesh(meshID),
+        meshes.connect(user2).claimMesh(meshID),
         "Insufficient to burn"
       );
     });
@@ -158,7 +156,7 @@ describe("Meshes.sol", function () {
   describe("withdraw and accounting", () => {
     it("mints daily payout after one day and enforces once-per-day", async () => {
       const meshID = "E30N30";
-      await meshes.connect(user1).ClaimMesh(meshID);
+      await meshes.connect(user1).claimMesh(meshID);
 
       // Day 0 -> cannot withdraw yet (lastWithdrawDay == 0, dayIndex == 0)
       await expectRevert(meshes.connect(user1).withdraw(), "Daily receive");
@@ -186,7 +184,7 @@ describe("Meshes.sol", function () {
 
     it("applies unclaimed decay and pays foundation hourly when due", async () => {
       const meshID = "E40N40";
-      await meshes.connect(user1).ClaimMesh(meshID);
+      await meshes.connect(user1).claimMesh(meshID);
 
       // Move to day 1 and withdraw once (to initialize processed day)
       await increaseTime(SECONDS_IN_DAY);
@@ -213,7 +211,7 @@ describe("Meshes.sol", function () {
 
   describe("Dashboards and views", () => {
     it("getMeshData / getMeshDashboard / getDashboard return sane values", async () => {
-      await meshes.connect(user1).ClaimMesh("E50N50");
+      await meshes.connect(user1).claimMesh("E50N50");
 
       const meshData = await meshes.getMeshData();
       expectEqBN(meshData.userCounts, 1);
@@ -235,7 +233,7 @@ describe("Meshes.sol", function () {
       let [heat0, cost0] = await meshes.quoteClaimCost(meshID);
       expectEqBN(cost0, 0);
 
-      await meshes.connect(user1).ClaimMesh(meshID);
+      await meshes.connect(user1).claimMesh(meshID);
       await meshes.connect(governanceSafe).setBurnScale(1000);
       const [heat1, cost1] = await meshes.quoteClaimCost(meshID);
       // heat > 0, and since cnt>0 now, cost for the next claimant should be > 0 when burnSwitch is on
@@ -244,7 +242,7 @@ describe("Meshes.sol", function () {
     });
 
     it("rejects invalid mesh ID on ClaimMesh and view functions handle gracefully", async () => {
-      await expectRevert(meshes.connect(user1).ClaimMesh("invalid"), "Invalid meshID format");
+      await expectRevert(meshes.connect(user1).claimMesh("invalid"), "Invalid meshID format");
       const info = await meshes.getMeshInfo("invalid");
       // returns zeros and parsed lon/lat as 0,0
       expectEqBN(info.applyCount, 0);
@@ -254,7 +252,7 @@ describe("Meshes.sol", function () {
 
   describe("Edge cases", () => {
     it("yearly decay over multiple years", async () => {
-      await meshes.connect(user1).ClaimMesh("E70N70");
+      await meshes.connect(user1).claimMesh("E70N70");
       // day 1
       await increaseTime(SECONDS_IN_DAY);
       await meshes.connect(user1).withdraw();
@@ -293,7 +291,7 @@ describe("Meshes.sol", function () {
 
     it("previewWithdraw matches realized payout next day", async () => {
       const meshID = "E80N80";
-      await meshes.connect(user1).ClaimMesh(meshID);
+      await meshes.connect(user1).claimMesh(meshID);
 
       // Day 0 preview
       const pre0 = await meshes.previewWithdraw(user1.address);
@@ -317,7 +315,7 @@ describe("Meshes.sol", function () {
     it("setTreasuryAddress rejects zero and same address; setGovernanceSafe rejects invalid", async () => {
       // Treasury address already set in beforeEach
       await expectRevert(meshes.connect(governanceSafe).setTreasuryAddress("0x0000000000000000000000000000000000000000"), "Invalid treasury address");
-      await expectRevert(meshes.connect(governanceSafe).setTreasuryAddress(await meshes.treasuryAddr()), "Same treasury address");
+      await expectRevert(meshes.connect(governanceSafe).setTreasuryAddress(await meshes.treasuryAddress()), "Same treasury address");
       await expectRevert(meshes.connect(governanceSafe).setGovernanceSafe("0x0000000000000000000000000000000000000000"), "Invalid safe");
       await expectRevert(meshes.connect(governanceSafe).setGovernanceSafe(governanceSafe.address), "Same safe");
     });

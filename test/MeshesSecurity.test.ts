@@ -94,7 +94,7 @@ describe.skip("Meshes Contract Security Tests (legacy, constructor and APIs chan
         it("Should revert ClaimMesh when paused", async function () {
             await meshes.connect(owner1).pause();
             await expect(
-                meshes.connect(user1).ClaimMesh("E12N34")
+                meshes.connect(user1).claimMesh("E12N34")
             ).to.be.revertedWith("Contract is paused");
         });
 

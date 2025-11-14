@@ -37,7 +37,7 @@ async function main() {
     }
     if (meshes) {
       try {
-        const safeM = await meshes.governanceSafe();
+        const safeM = await meshes.governanceSafeAddress();
         if (safeM.toLowerCase() !== (await (await ethers.getSigners())[0].getAddress()).toLowerCase()) {
           console.log("Governance safe mismatch with current signer; re-deploying for a clean session...");
           meshes = undefined as any;
@@ -180,7 +180,7 @@ async function main() {
 
         // 执行claim，让合约处理所有验证逻辑
         try {
-          await (await meshes.connect(u).ClaimMesh(id, { gasLimit: 900000 })).wait();
+          await (await meshes.connect(u).claimMesh(id, { gasLimit: 900000 })).wait();
           claimedByUser[key].add(id);
           claimedGlobal.add(id);
           try { fs.writeFileSync(claimedFile, JSON.stringify(Array.from(claimedGlobal))); } catch {}

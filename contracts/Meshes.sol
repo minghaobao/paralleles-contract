@@ -43,10 +43,10 @@ contract Meshes is ERC20, ReentrancyGuard, Pausable, Ownable {
 
     // ============ 时间相关常量 ============
     /** @dev 一天的秒数 */
-    uint256 SECONDS_IN_DAY = 86400;
+    uint256 private constant SECONDS_IN_DAY = 86400;
     
     /** @dev 总铸造持续时间：10年，用于计算代币衰减 */
-    uint256 totalMintDuration = 10 * 365 * SECONDS_IN_DAY; // 10年
+    uint256 private constant TOTAL_MINT_DURATION = 10 * 365 * SECONDS_IN_DAY; // 10年
     
     // 已废弃的常量（保留用于历史记录）
     //    uint256 public constant MAX_TOTAL_SUPPLY = 81_000_000_000 * 10**18; // 81亿枚
@@ -54,7 +54,7 @@ contract Meshes is ERC20, ReentrancyGuard, Pausable, Ownable {
 
     // ============ 燃烧机制参数 ============
     /** @dev 基础燃烧数量（wei单位），用于计算认领成本 */
-    uint256 baseBurnAmount = 10;
+    uint256 private constant BASE_BURN_AMOUNT = 10;
 
     // ============ 代币铸造参数 ============
     /** @dev 当前日铸造因子，用于计算每日可铸造的代币数量 */
@@ -74,11 +74,11 @@ contract Meshes is ERC20, ReentrancyGuard, Pausable, Ownable {
     /** @dev 用户认领信息映射：用户地址 => 网格ID => 认领信息 */
     mapping(address => mapping(string => MintInfo)) public userMints;
     
-    /** @dev 网格申请计数：网格ID => 申请次数（避免数组膨胀） */
-    mapping(string => uint32) public meshApplyCount;
+    /** @dev 网格认领计数：网格ID => 认领次数（避免数组膨胀） */
+    mapping(string => uint32) public meshClaimCount;
     
-    /** @dev 网格热度值：网格ID => 热度值（基于申请次数计算） */
-    mapping(string => uint256) public degreeHeats;
+    /** @dev 网格热度值：网格ID => 热度值（基于认领次数计算） */
+    mapping(string => uint256) public meshHeats;
     
     /** @dev 用户累计权重：用户地址 => 累计权重（影响代币奖励） */
     mapping(address => uint256) public userWeightSum;
@@ -100,14 +100,14 @@ contract Meshes is ERC20, ReentrancyGuard, Pausable, Ownable {
     /** @dev 创世时间戳，用于计算相对时间 */
     uint256 public genesisTs;
     
-    /** @dev 活跃铸币者数量 */
-    uint256 public activeMinters;
+    /** @dev 活跃认领者数量 */
+    uint256 public activeClaimers;
     
     /** @dev 活跃网格数量（被认领的网格数） */
     uint256 public activeMeshes;
     
     /** @dev 总认领次数 */
-    uint256 public claimMints;
+    uint256 public totalClaimMints;
     
     /** @dev 最大网格热度值（用于计算燃烧成本） */
     uint256 public maxMeshHeats;
@@ -117,10 +117,10 @@ contract Meshes is ERC20, ReentrancyGuard, Pausable, Ownable {
 
     // ============ 地址配置 ============
     /** @dev MeshesTreasury 地址，接收部分代币分配 */
-    address public treasuryAddr;
+    address public treasuryAddress;
     
     /** @dev 治理安全地址（Gnosis Safe），用于管理合约 */
-    address public governanceSafe;
+    address public governanceSafeAddress;
     
     // ============ 治理模式切换 ============
     /** @dev 治理模式：true=Safe治理，false=Owner治理 */
@@ -237,14 +237,14 @@ contract Meshes is ERC20, ReentrancyGuard, Pausable, Ownable {
     // ============ 访问控制修饰符 ============
     /** @dev 仅限治理安全地址调用的修饰符 */
     modifier onlySafe() {
-        require(msg.sender == governanceSafe, "Only Safe");
+        require(msg.sender == governanceSafeAddress, "Only Safe");
         _;
     }
     
     /** @dev 仅限当前治理者调用的修饰符（Owner或Safe） */
     modifier onlyGovernance() {
         if (isSafeGovernance) {
-            require(msg.sender == governanceSafe, "Only Safe governance");
+            require(msg.sender == governanceSafeAddress, "Only Safe governance");
         } else {
             require(msg.sender == owner(), "Only Owner governance");
         }
@@ -294,7 +294,7 @@ contract Meshes is ERC20, ReentrancyGuard, Pausable, Ownable {
 
     /**
      * @dev 构造函数，初始化Mesh代币合约
-     * @param _governanceSafe 治理安全地址，用于管理合约
+     * @param _governanceSafeAddress 治理安全地址，用于管理合约
      * 
      * 初始化过程：
      * 1. 设置代币名称和符号
@@ -302,20 +302,20 @@ contract Meshes is ERC20, ReentrancyGuard, Pausable, Ownable {
      * 3. 配置治理地址
      * 4. 初始化日铸造因子
      * 5. 设置 Treasury 转账时间
-     * 6. treasuryAddr 初始化为 address(0)，后续通过 setTreasuryAddress 设置
+     * 6. treasuryAddress 初始化为 address(0)，后续通过 setTreasuryAddress 设置
      */
     constructor(
-        address _governanceSafe
+        address _governanceSafeAddress
     ) ERC20("Mesh Token", "MESH") {
-        require(_governanceSafe != address(0), "Invalid safe address");
+        require(_governanceSafeAddress != address(0), "Invalid safe address");
 
         // 记录创世时间戳，用于计算相对时间
         genesisTs = block.timestamp;
         
         // 设置治理地址
-        governanceSafe = _governanceSafe;
-        // treasuryAddr 初始化为 address(0)，后续通过 setTreasuryAddress 设置
-        treasuryAddr = address(0);
+        governanceSafeAddress = _governanceSafeAddress;
+        // treasuryAddress 初始化为 address(0)，后续通过 setTreasuryAddress 设置
+        treasuryAddress = address(0);
         
         // 初始化日因子为首日值（1e10 = 1.0，表示100%）
         dailyMintFactor = 1e10;
@@ -430,34 +430,34 @@ contract Meshes is ERC20, ReentrancyGuard, Pausable, Ownable {
         address _newTreasuryAddr
     ) external onlyGovernance whenNotPaused {
         require(_newTreasuryAddr != address(0), "Invalid treasury address");
-        require(_newTreasuryAddr != treasuryAddr, "Same treasury address");
+        require(_newTreasuryAddr != treasuryAddress, "Same treasury address");
         
-        address oldTreasury = treasuryAddr;
+        address oldTreasury = treasuryAddress;
         
         // 如果是首次设置（从 address(0) 设置），跳过白名单检查
-        if (treasuryAddr == address(0)) {
-            treasuryAddr = _newTreasuryAddr;
+        if (treasuryAddress == address(0)) {
+            treasuryAddress = _newTreasuryAddr;
             emit TreasuryAddressUpdated(oldTreasury, _newTreasuryAddr);
             return;
         }
         
         // 如果当前是Owner治理模式，允许Owner多次修改，无需白名单检查
         if (!isSafeGovernance) {
-            treasuryAddr = _newTreasuryAddr;
+            treasuryAddress = _newTreasuryAddr;
             emit TreasuryAddressUpdated(oldTreasury, _newTreasuryAddr);
             return;
         }
         
         // Safe治理模式下，后续修改需要白名单检查
         require(_isApprovedByCurrentTreasury(_newTreasuryAddr), "New treasury not approved by current treasury");
-        treasuryAddr = _newTreasuryAddr;
+        treasuryAddress = _newTreasuryAddr;
         emit TreasuryAddressUpdated(oldTreasury, _newTreasuryAddr);
     }
 
     // 仅用于只读校验：查询当前 Treasury（若为合约且实现方法）对白名单的认可
     function _isApprovedByCurrentTreasury(address candidate) internal view returns (bool) {
         bytes4 sel = bytes4(keccak256("isRecipientApproved(address)"));
-        (bool ok, bytes memory data) = treasuryAddr.staticcall(abi.encodeWithSelector(sel, candidate));
+        (bool ok, bytes memory data) = treasuryAddress.staticcall(abi.encodeWithSelector(sel, candidate));
         if (!ok || data.length == 0) return false;
         return abi.decode(data, (bool));
     }
@@ -478,9 +478,9 @@ contract Meshes is ERC20, ReentrancyGuard, Pausable, Ownable {
 
     function setGovernanceSafe(address _newSafe) external onlyGovernance whenNotPaused {
         require(_newSafe != address(0), "Invalid safe");
-        require(_newSafe != governanceSafe, "Same safe");
-        address old = governanceSafe;
-        governanceSafe = _newSafe;
+        require(_newSafe != governanceSafeAddress, "Same safe");
+        address old = governanceSafeAddress;
+        governanceSafeAddress = _newSafe;
         emit GovernanceSafeUpdated(old, _newSafe);
     }
     
@@ -500,7 +500,7 @@ contract Meshes is ERC20, ReentrancyGuard, Pausable, Ownable {
      */
     function switchToSafeGovernance() external onlyContractOwner whenNotPaused {
         require(!governanceLocked, "Governance already locked");
-        require(governanceSafe != address(0), "Safe address not set");
+        require(governanceSafeAddress != address(0), "Safe address not set");
         require(!isSafeGovernance, "Already in Safe governance");
         
         isSafeGovernance = true;
@@ -523,7 +523,7 @@ contract Meshes is ERC20, ReentrancyGuard, Pausable, Ownable {
     ) {
         _isSafeGovernance = isSafeGovernance;
         _governanceLocked = governanceLocked;
-        _currentGovernance = isSafeGovernance ? governanceSafe : owner();
+        _currentGovernance = isSafeGovernance ? governanceSafeAddress : owner();
     }
 
     /**
@@ -599,7 +599,7 @@ contract Meshes is ERC20, ReentrancyGuard, Pausable, Ownable {
      * 
      * 燃烧机制：
      * - 首次认领：免费
-     * - 重复认领：需要燃烧代币，成本 = baseBurnAmount * (heat^2) / maxMeshHeats * burnScaleMilli / 1000
+     * - 重复认领：需要燃烧代币，成本 = BASE_BURN_AMOUNT * (heat^2) / maxMeshHeats * burnScaleMilli / 1000
      * - 燃烧的代币会被永久销毁，减少总供应量
      * 
      * 安全特性：
@@ -608,104 +608,102 @@ contract Meshes is ERC20, ReentrancyGuard, Pausable, Ownable {
      * - 输入验证：确保网格ID格式正确
      * - 重复检查：防止同一用户重复认领同一网格
      */
-    function ClaimMesh(string memory _meshID) 
+    function claimMesh(string memory _meshID) 
         external 
         nonReentrant 
         whenNotPaused 
     {
-        // 输入验证
+        _claimMeshInternal(msg.sender, _meshID);
+    }
+
+    function claimMeshFor(address _user, string memory _meshID)
+        external
+        onlyGovernance
+        nonReentrant
+        whenNotPaused
+    {
+        _claimMeshInternal(_user, _meshID);
+    }
+
+    function _claimMeshInternal(address _user, string memory _meshID) private {
+        require(_user != address(0), "Invalid user address");
         require(bytes(_meshID).length > 0, "MeshID cannot be empty");
         require(isValidMeshID(_meshID), "Invalid meshID format");
-        
-        MintInfo memory mintInfo = userMints[msg.sender][_meshID];
 
+        MintInfo memory mintInfo = userMints[_user][_meshID];
         require(mintInfo.updateTs == 0, "Already claim");
 
-        uint256 _len = meshApplyCount[_meshID];
-        if (0 == _len) {
+        uint256 _len = meshClaimCount[_meshID];
+        if (_len == 0) {
             activeMeshes++;
         }
 
+        uint256 costBurned = 0;
         if (burnScaleMilli > 0 && _len > 0) {
             uint256 denom = maxMeshHeats == 0 ? 1 : maxMeshHeats;
-            uint256 heatForCost = degreeHeats[_meshID];
+            uint256 heatForCost = meshHeats[_meshID];
             if (heatForCost == 0) {
                 heatForCost = calculateDegreeHeat(_len);
             }
-            // heat 为 1e18 定点，成本按 base * (heat^2/1e18) / max
             uint256 scaledHeatSq = (heatForCost * heatForCost) / 1 ether;
-            uint256 _amount = (baseBurnAmount * scaledHeatSq) / denom;
-            // 应用缩放（千分位），允许 <1x 或 >1x
+            uint256 _amount = (BASE_BURN_AMOUNT * scaledHeatSq) / denom;
             _amount = (_amount * burnScaleMilli) / 1000;
-            // 前端预换：仅检查余额足够
-            require(balanceOf(msg.sender) >= _amount, "Insufficient to burn");
+            require(balanceOf(_user) >= _amount, "Insufficient to burn");
 
             totalBurn += _amount;
-            _burn(msg.sender, _amount);
+            _burn(_user, _amount);
+            costBurned = _amount;
             emit TokensBurned(_amount, 1);
-            emit ClaimCostBurned(msg.sender, _meshID, _amount);
+            emit ClaimCostBurned(_user, _meshID, _amount);
         }
 
-        // 在增加权重之前，先把历史未领（按天）结算到昨天，确保新权重只影响今天及以后
         uint256 cd = _currentDayIndex();
         if (cd > 0) {
-            _applyUnclaimedDecay(msg.sender, cd);
+            _applyUnclaimedDecay(_user, cd);
         }
 
         mintInfo.meshID = _meshID;
-        mintInfo.user = msg.sender;
+        mintInfo.user = _user;
         mintInfo.updateTs = block.timestamp;
         mintInfo.withdrawTs = block.timestamp;
-        userMints[msg.sender][_meshID] = mintInfo;
-        // 更新网格热度（按当前参与人数）
+        userMints[_user][_meshID] = mintInfo;
+
         uint256 _degreeHeat = calculateDegreeHeat(_len);
-        degreeHeats[_meshID] = _degreeHeat;
+        meshHeats[_meshID] = _degreeHeat;
         if (_degreeHeat > maxMeshHeats) {
             maxMeshHeats = _degreeHeat;
         }
 
         emit DegreeHeats(_meshID, _degreeHeat, _len);
 
-        // 用户累计权重 +1 次认领（影响今天之后）
-        userClaimCounts[msg.sender] += 1;
-        userWeightSum[msg.sender] += _degreeHeat;
-        emit UserWeightUpdated(msg.sender, userWeightSum[msg.sender], userClaimCounts[msg.sender]);
+        userClaimCounts[_user] += 1;
+        userWeightSum[_user] += _degreeHeat;
+        emit UserWeightUpdated(_user, userWeightSum[_user], userClaimCounts[_user]);
 
-        // 记录用户第一次claim的时间戳，用于24小时提取限制
-        if (userClaimCounts[msg.sender] == 1) {
-            firstClaimTimestamp[msg.sender] = block.timestamp;
-            // 初始化处理进度
-            uint256 currentDay = _currentDayIndex();
-            lastProcessedDay[msg.sender] = currentDay;
+        if (userClaimCounts[_user] == 1) {
+            firstClaimTimestamp[_user] = block.timestamp;
+            lastProcessedDay[_user] = _currentDayIndex();
         }
 
-        // 递增网格申请计数
-        meshApplyCount[_meshID] = uint32(_len + 1);
+        meshClaimCount[_meshID] = uint32(_len + 1);
 
-        // 解析 lon/lat（以 0.01 度为单位），若解析失败则返回 (0,0)
         (int32 lon100, int32 lat100) = _parseMeshId(_meshID);
         emit MeshClaimed(
-            msg.sender,
+            _user,
             _meshID,
             lon100,
             lat100,
             uint32(_len + 1),
             _degreeHeat,
-            burnScaleMilli > 0 && _len > 0
-                ? ((((baseBurnAmount * ((_degreeHeat * _degreeHeat) / 1 ether)) / (maxMeshHeats == 0 ? 1 : maxMeshHeats)) * burnScaleMilli) / 1000)
-                : 0
+            costBurned
         );
 
-        if (!minters[msg.sender]) {
-            activeMinters++;
-            minters[msg.sender] = true;
+        if (!minters[_user]) {
+            activeClaimers++;
+            minters[_user] = true;
         }
 
-        claimMints++;
-
-        //emit ClaimMint(msg.sender, _meshID, block.timestamp);
-
-        // 触发按小时 Treasury 转出（用户发起，承担 gas）
+        totalClaimMints++;
         _maybePayoutTreasury();
     }
 
@@ -844,7 +842,7 @@ contract Meshes is ERC20, ReentrancyGuard, Pausable, Ownable {
             uint256 amount = pendingTreasuryPool;
             pendingTreasuryPool = 0;
             lastPayoutHour = currentHour;
-            _transfer(address(this), treasuryAddr, amount);
+            _transfer(address(this), treasuryAddress, amount);
             emit TreasuryPayout(amount, block.timestamp);
         }
     }
@@ -904,19 +902,19 @@ contract Meshes is ERC20, ReentrancyGuard, Pausable, Ownable {
         int32 lon100,
         int32 lat100
     ) {
-        applyCount = meshApplyCount[_meshID];
-        heat = degreeHeats[_meshID];
+        applyCount = meshClaimCount[_meshID];
+        heat = meshHeats[_meshID];
         (lon100, lat100) = _parseMeshId(_meshID);
     }
 
     function quoteClaimCost(string calldata _meshID) external view returns (uint256 heat, uint256 costBurned) {
-        uint32 cnt = meshApplyCount[_meshID];
+        uint32 cnt = meshClaimCount[_meshID];
         heat = calculateDegreeHeat(cnt);
         uint256 denom = maxMeshHeats == 0 ? 1 : maxMeshHeats;
         if (cnt == 0 || burnScaleMilli == 0) {
             costBurned = 0;
         } else {
-            uint256 baseCost = (baseBurnAmount * heat * heat) / denom;
+            uint256 baseCost = (BASE_BURN_AMOUNT * heat * heat) / denom;
             costBurned = (baseCost * burnScaleMilli) / 1000;
         }
     }
@@ -996,7 +994,7 @@ contract Meshes is ERC20, ReentrancyGuard, Pausable, Ownable {
             uint256 liquidSupply
         )
     {
-        userCounts = activeMinters;
+        userCounts = activeClaimers;
         launchData = (block.timestamp - genesisTs) / SECONDS_IN_DAY;
         totalMinted = totalSupply();
         liquidSupply = totalMinted - balanceOf(address(this));
@@ -1016,8 +1014,8 @@ contract Meshes is ERC20, ReentrancyGuard, Pausable, Ownable {
             uint256 sinceGenesis
         )
     {
-        participants = activeMinters;
-        totalclaimMints = claimMints;
+        participants = activeClaimers;
+        totalclaimMints = totalClaimMints;
         claimedMesh = activeMeshes;
         maxHeats = maxMeshHeats;
         sinceGenesis = (block.timestamp - genesisTs) / SECONDS_IN_DAY;
@@ -1041,7 +1039,7 @@ contract Meshes is ERC20, ReentrancyGuard, Pausable, Ownable {
         _liquidSupply = _totalSupply - balanceOf(address(this));
         _destruction = totalBurn;
         _pending = balanceOf(address(this));
-        _treasury = balanceOf(treasuryAddr);
+        _treasury = balanceOf(treasuryAddress);
     }
 
     /**
@@ -1050,13 +1048,13 @@ contract Meshes is ERC20, ReentrancyGuard, Pausable, Ownable {
     function getContractStatus() external view returns (
         bool _paused,
         uint256 _totalSupply,
-        uint256 _activeMinters,
+        uint256 _activeClaimers,
         uint256 _activeMeshes,
         uint256 _totalBurn
     ) {
         _paused = paused();
         _totalSupply = totalSupply();
-        _activeMinters = activeMinters;
+        _activeClaimers = activeClaimers;
         _activeMeshes = activeMeshes;
         _totalBurn = totalBurn;
     }

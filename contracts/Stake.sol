@@ -7,14 +7,6 @@ import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/security/Pausable.sol";
 
 /**
- * @title IFoundationManage - 基金会管理接口
- * @dev 用于从基金会合约转移代币到质押合约
- */
-interface IFoundationManage {
-    function autoTransferTo(address to, uint256 amount) external;
-}
-
-/**
  * @title Stake - 质押合约
  * @dev 管理用户代币质押和利息计算，支持固定期限质押
  * 
@@ -75,13 +67,10 @@ contract Stake is ReentrancyGuard, Pausable {
     IERC20 public meshToken;
     
     /** @dev 基金会地址，用于接收剩余代币 */
-    address public foundationAddr;
-    
-    /** @dev 基金会管理合约地址，用于代币转移 */
-    address public foundationManager;
+    address public foundationAddress;
     
     /** @dev 治理安全地址（Gnosis Safe），用于管理操作 */
-    address public governanceSafe;
+    address public governanceSafeAddress;
     
     // ============ 质押参数配置 ============
     /** @dev 年化收益率（基点，如1000表示10%） */
@@ -92,9 +81,6 @@ contract Stake is ReentrancyGuard, Pausable {
     
     /** @dev APY基数，10000 = 100% */
     uint256 public constant APY_BASE = 10000;
-    
-    /** @dev 最低合约余额，低于该值则触发申请 */
-    uint256 public minContractBalance;
     
     // ============ 质押和提取限额 ============
     /** @dev 最小质押金额 */
@@ -118,19 +104,16 @@ contract Stake is ReentrancyGuard, Pausable {
     event InterestClaimed(address indexed user, uint256 amount, uint256 timestamp);
     event APYUpdated(uint256 oldAPY, uint256 newAPY);
     event FoundationUpdated(address indexed oldFoundation, address indexed newFoundation);
-    event FoundationManagerUpdated(address indexed oldManager, address indexed newManager);
-    event MinContractBalanceUpdated(uint256 oldValue, uint256 newValue);
-    event AutoTopUpRequested(address indexed manager, uint256 requestedAmount);
     event StakeLimitsUpdated(uint256 minAmount, uint256 maxAmount);
     
     // 仅 Safe 可执行管理操作
     modifier onlySafe() {
-        require(msg.sender == governanceSafe, "Only Safe");
+        require(msg.sender == governanceSafeAddress, "Only Safe");
         _;
     }
     
     modifier onlyFoundation() {
-        require(msg.sender == foundationAddr, "Only foundation can call");
+        require(msg.sender == foundationAddress, "Only foundation can call");
         _;
     }
     
@@ -141,19 +124,19 @@ contract Stake is ReentrancyGuard, Pausable {
     
     constructor(
         address _meshToken,
-        address _foundationAddr,
-        address _governanceSafe,
+        address _foundationAddress,
+        address _governanceSafeAddress,
         uint256 _apy
     ) {
         require(_meshToken != address(0), "Invalid mesh token address");
-        require(_foundationAddr != address(0), "Invalid foundation address");
-        require(_governanceSafe != address(0), "Invalid safe address");
+        require(_foundationAddress != address(0), "Invalid foundation address");
+        require(_governanceSafeAddress != address(0), "Invalid safe address");
         require(_apy > 0, "APY must be greater than 0");
         
         meshToken = IERC20(_meshToken);
-        foundationAddr = _foundationAddr;
+        foundationAddress = _foundationAddress;
         apy = _apy;
-        governanceSafe = _governanceSafe;
+        governanceSafeAddress = _governanceSafeAddress;
     }
 
     /**
@@ -161,8 +144,8 @@ contract Stake is ReentrancyGuard, Pausable {
      */
     function setGovernanceSafe(address _safe) external onlySafe {
         require(_safe != address(0), "Invalid safe");
-        require(_safe != governanceSafe, "Same safe");
-        governanceSafe = _safe;
+        require(_safe != governanceSafeAddress, "Same safe");
+        governanceSafeAddress = _safe;
     }
     
     /**
@@ -226,22 +209,18 @@ contract Stake is ReentrancyGuard, Pausable {
         uint256 principal = userStake.amount;
         uint256 interest = calculateInterest(msg.sender);
         uint256 totalAmount = principal + interest;
-        _ensureTopUp(totalAmount);
         
         // 更新统计信息
         stakeStats.totalStaked -= principal;
         stakeStats.totalEarned += interest;
         stakeStats.activeStakes--;
         
-        // 从合约余额支付（本金+利息）
+        // 余额检查
+        require(meshToken.balanceOf(address(this)) >= totalAmount, "Insufficient contract balance");
         require(meshToken.transfer(msg.sender, totalAmount), "Transfer failed");
         
-        // 更新用户统计
         userTotalEarned[msg.sender] += interest;
-        
         emit Withdrawn(msg.sender, principal, interest);
-        
-        // 清除质押记录
         delete userStakes[msg.sender];
     }
     
@@ -258,22 +237,16 @@ contract Stake is ReentrancyGuard, Pausable {
         // 提前解除质押的手续费：损失50%的利息
         uint256 penalty = interest / 2;
         uint256 totalAmount = principal + (interest - penalty);
-        _ensureTopUp(totalAmount);
         
-        // 更新统计信息
         stakeStats.totalStaked -= principal;
         stakeStats.totalEarned += (interest - penalty);
         stakeStats.activeStakes--;
         
-        // 从合约余额支付（本金+利息-罚金）
+        require(meshToken.balanceOf(address(this)) >= totalAmount, "Insufficient contract balance");
         require(meshToken.transfer(msg.sender, totalAmount), "Transfer failed");
         
-        // 更新用户统计
         userTotalEarned[msg.sender] += (interest - penalty);
-        
         emit Withdrawn(msg.sender, principal, interest - penalty);
-        
-        // 清除质押记录
         delete userStakes[msg.sender];
     }
     
@@ -284,18 +257,16 @@ contract Stake is ReentrancyGuard, Pausable {
         StakeInfo storage userStake = userStakes[msg.sender];
         uint256 interest = calculateInterest(msg.sender);
         require(interest > 0, "No interest to claim");
-        _ensureTopUp(interest);
         
         // 更新最后领取时间
         userStake.lastClaimTime = block.timestamp;
         
         // 从合约余额支付利息
+        require(meshToken.balanceOf(address(this)) >= interest, "Insufficient contract balance");
         require(meshToken.transfer(msg.sender, interest), "Transfer failed");
         
-        // 更新统计信息
         stakeStats.totalEarned += interest;
         userTotalEarned[msg.sender] += interest;
-        
         emit InterestClaimed(msg.sender, interest, block.timestamp);
     }
     
@@ -383,24 +354,12 @@ contract Stake is ReentrancyGuard, Pausable {
      */
     function updateFoundation(address _newFoundation) external onlySafe {
         require(_newFoundation != address(0), "Invalid foundation address");
-        require(_newFoundation != foundationAddr, "Same foundation address");
+        require(_newFoundation != foundationAddress, "Same foundation address");
         
-        address oldFoundation = foundationAddr;
-        foundationAddr = _newFoundation;
+        address oldFoundation = foundationAddress;
+        foundationAddress = _newFoundation;
         
         emit FoundationUpdated(oldFoundation, _newFoundation);
-    }
-
-    function setFoundationManager(address _manager) external onlySafe {
-        require(_manager != address(0), "Invalid manager");
-        address old = foundationManager;
-        foundationManager = _manager;
-        emit FoundationManagerUpdated(old, _manager);
-    }
-
-    function setMinContractBalance(uint256 _min) external onlySafe {
-        emit MinContractBalanceUpdated(minContractBalance, _min);
-        minContractBalance = _min;
     }
 
     /**
@@ -431,24 +390,6 @@ contract Stake is ReentrancyGuard, Pausable {
         _unpause();
     }
 
-    function _ensureTopUp(uint256 pendingPayout) internal {
-        if (foundationManager == address(0)) return;
-        uint256 bal = meshToken.balanceOf(address(this));
-        if (bal >= minContractBalance && bal >= pendingPayout) return;
-        uint256 target = minContractBalance * 2;
-        uint256 need = target > bal ? (target - bal) : 0;
-        if (need < pendingPayout) {
-            need = pendingPayout;
-        }
-        if (need == 0) return;
-        emit AutoTopUpRequested(foundationManager, need);
-        // 可选直接尝试调用（由治理预授权时可成功）
-        try IFoundationManage(foundationManager).autoTransferTo(address(this), need) {
-        } catch {
-            // 忽略失败，等待 Safe/Owner 执行
-        }
-    }
-    
     /**
      * @dev 获取用户质押时间
      * @param _user 用户地址

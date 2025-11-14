@@ -30,7 +30,7 @@ FoundationManage 合约
 ### 1. Meshes → MeshesTreasury
 
 **触发机制**：
-- 自动触发：在 `ClaimMesh()` 和 `withdraw()` 函数中，如果满足条件会自动调用 `_maybePayoutFoundation()`
+- 自动触发：在 `claimMesh()` 和 `withdraw()` 函数中，如果满足条件会自动调用 `_maybePayoutTreasury()`
 - 手动触发：任何人都可以调用 `payoutFoundationIfDue()` 函数手动触发转账
 
 **转账条件**：
