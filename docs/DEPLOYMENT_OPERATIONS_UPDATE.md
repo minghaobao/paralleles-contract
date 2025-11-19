@@ -176,7 +176,68 @@
 
 ---
 
-## 3. 测试验证
+## 3. 资金流向和权限控制
+
+### 3.1 资金流向
+
+#### 完整流程
+```
+Meshes 合约
+    ↓ (自动转账，按小时)
+MeshesTreasury 合约
+    ↓ (通过 Safe 多签或手动转账)
+FoundationManage 合约
+    ↓ (自动转账)
+最终收款方（Reward、Stake、X402PaymentGateway 等）
+```
+
+#### Meshes → MeshesTreasury
+- **触发机制**: 在 `claimMesh()` 和 `withdraw()` 中自动触发，或手动调用 `payoutTreasuryIfDue()`
+- **转账条件**: 当前小时索引 > 上次转账小时索引，且 `pendingTreasuryPool` 有余额
+- **资金来源**: 用户未提取代币的日衰减（每天 10% 分配给 Treasury）
+
+#### MeshesTreasury → FoundationManage
+- **转账方式**: 通过 Safe 多签调用 `transferTo()` 或 `balanceFoundationManage()`
+- **权限要求**: 必须通过 Safe 多签批准
+- **白名单控制**: 只有批准的收款方才能接收转账
+
+#### FoundationManage → 最终收款方
+- **转账方式**: 通过 `autoTransferTo()` 自动转账
+- **限额控制**: 单次限额、每日限额、全局限额
+- **权限要求**: 只有批准的发起方和收款方才能执行
+
+### 3.2 MeshesTreasury 权限控制
+
+#### 两种治理模式
+1. **Owner 治理模式**（初始模式）
+   - Owner 可以设置基础配置（Safe 地址、Mesh 代币地址）
+   - Safe 可以执行转账操作和关键配置
+   - 适用于合约部署和初始配置阶段
+
+2. **Safe 治理模式**（推荐模式）
+   - 切换到 Safe 治理模式后，Owner 只能查看，无法修改配置
+   - Safe 可以执行所有转账操作和关键配置
+   - 一旦切换，无法回退到 Owner 模式
+
+#### 权限矩阵
+| 功能 | Owner 模式 | Safe 模式 | 说明 |
+|------|-----------|----------|------|
+| `transferTo()` | ❌ | ✅ | 仅 Safe |
+| `setSafe()` | ✅ | ✅ | 治理者 |
+| `setMeshToken()` | ✅ | ✅ | 治理者（只能一次） |
+| `setFoundationManage()` | ❌ | ✅ | 仅 Safe |
+| `setRecipient()` | ❌ | ✅ | 仅 Safe |
+| `switchToSafeGovernance()` | ✅ | ❌ | 仅 Owner，只能一次 |
+
+#### 最佳实践
+1. **部署后立即切换**: 完成初始配置后，立即切换到 Safe 治理模式
+2. **使用 Safe 多签**: 所有关键操作都通过 Safe 多签执行，设置合理的签名阈值（建议 2/3 或更高）
+3. **定期审计**: 定期检查治理模式状态，监控所有配置变更事件
+4. **紧急响应**: 准备紧急暂停流程，设置紧急提取机制
+
+---
+
+## 4. 测试验证
 
 ### 3.1 Meshes 治理测试
 
@@ -219,7 +280,7 @@ npm test -- test/X402PaymentGateway.test.ts
 
 ---
 
-## 4. 部署检查清单
+## 5. 部署检查清单
 
 ### Meshes 合约部署
 
@@ -248,7 +309,7 @@ npm test -- test/X402PaymentGateway.test.ts
 
 ---
 
-## 5. 回滚计划
+## 6. 回滚计划
 
 ### 如果出现问题
 
@@ -264,7 +325,7 @@ npm test -- test/X402PaymentGateway.test.ts
 
 ---
 
-## 6. 监控指标
+## 7. 监控指标
 
 ### Meshes 合约监控
 
@@ -282,7 +343,7 @@ npm test -- test/X402PaymentGateway.test.ts
 
 ---
 
-## 7. 联系和支持
+## 8. 联系和支持
 
 如有问题，请联系开发团队或查看相关文档：
 - [合约精简总结](./CONTRACT_SIMPLIFICATION_SUMMARY.md) - **详细变更清单**

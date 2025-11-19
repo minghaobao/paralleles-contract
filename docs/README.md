@@ -22,14 +22,12 @@
 | 文档 | 描述 | 重要性 |
 |------|------|--------|
 | [CONTRACT_SIMPLIFICATION_SUMMARY.md](./CONTRACT_SIMPLIFICATION_SUMMARY.md) | **所有合约的精简变更清单** | ⭐⭐⭐ **必读** |
-| [MESHES_UPDATE_SUMMARY.md](./MESHES_UPDATE_SUMMARY.md) | Meshes 合约更新摘要 | ⭐⭐⭐ |
-| [MESHES_TREASURY_UPDATE.md](./MESHES_TREASURY_UPDATE.md) | MeshesTreasury 更新详情 | ⭐⭐ |
 
 ### 部署和运维文档
 | 文档 | 描述 | 适用场景 |
 |------|------|----------|
-| [DEPLOYMENT_OPERATIONS_UPDATE.md](./DEPLOYMENT_OPERATIONS_UPDATE.md) | 部署与运维文档更新 | 部署和运维参考 |
-| [SECURITY_FIXES_IMPLEMENTATION.md](./SECURITY_FIXES_IMPLEMENTATION.md) | 安全修复实施报告 | 安全修复详情 |
+| [DEPLOYMENT_OPERATIONS_UPDATE.md](./DEPLOYMENT_OPERATIONS_UPDATE.md) | 部署与运维文档更新（包含资金流向和权限控制） | 部署和运维参考 |
+| [CONTRACTS_SECURITY_AND_RELATIONS.md](./CONTRACTS_SECURITY_AND_RELATIONS.md) | 合约功能与安全分析（包含安全修复详情） | 安全分析和修复详情 |
 
 ### 集成指南
 | 文档 | 描述 | 适用场景 |
@@ -41,13 +39,18 @@
 |------|------|----------|
 | [TEST_VERIFICATION_REPORT.md](./TEST_VERIFICATION_REPORT.md) | 核心测试验证报告 | 测试验证参考 |
 
+### 命名规范文档
+| 文档 | 描述 | 适用场景 |
+|------|------|----------|
+| [NAMING_CONVENTIONS.md](./NAMING_CONVENTIONS.md) | 合约命名规范文档（包含重构完成报告和外部调用更新） | 命名规范参考 |
+
 ---
 
 ## 🎯 按角色查找
 
 ### 开发者
 1. [CONTRACT_SIMPLIFICATION_SUMMARY.md](./CONTRACT_SIMPLIFICATION_SUMMARY.md) - 了解所有变更
-2. [MESHES_UPDATE_SUMMARY.md](./MESHES_UPDATE_SUMMARY.md) - 了解 Meshes 变更
+2. [NAMING_CONVENTIONS.md](./NAMING_CONVENTIONS.md) - 了解命名规范
 3. [TEST_VERIFICATION_REPORT.md](./TEST_VERIFICATION_REPORT.md) - 了解测试状态
 
 ### 运维人员
@@ -84,12 +87,12 @@
 - **合约变更**: [CONTRACT_SIMPLIFICATION_SUMMARY.md](./CONTRACT_SIMPLIFICATION_SUMMARY.md)
 - **部署指南**: [DEPLOYMENT_OPERATIONS_UPDATE.md](./DEPLOYMENT_OPERATIONS_UPDATE.md)
 - **测试验证**: [TEST_VERIFICATION_REPORT.md](./TEST_VERIFICATION_REPORT.md)
-- **安全修复**: [SECURITY_FIXES_IMPLEMENTATION.md](./SECURITY_FIXES_IMPLEMENTATION.md)
+- **安全修复**: [CONTRACTS_SECURITY_AND_RELATIONS.md](./CONTRACTS_SECURITY_AND_RELATIONS.md)
 
 ### 按合约查找
-- **Meshes**: [MESHES_UPDATE_SUMMARY.md](./MESHES_UPDATE_SUMMARY.md)
-- **MeshesTreasury**: [MESHES_TREASURY_UPDATE.md](./MESHES_TREASURY_UPDATE.md)
-- **X402**: [X402_INTEGRATION_GUIDE.md](../X402_INTEGRATION_GUIDE.md)
+- **Meshes**: [CONTRACT_SIMPLIFICATION_SUMMARY.md](./CONTRACT_SIMPLIFICATION_SUMMARY.md) - Meshes 合约变更章节
+- **MeshesTreasury**: [DEPLOYMENT_OPERATIONS_UPDATE.md](./DEPLOYMENT_OPERATIONS_UPDATE.md) - 资金流向和权限控制章节
+- **X402**: [X402_INTEGRATION_GUIDE.md](./X402_INTEGRATION_GUIDE.md)
 
 ---
 

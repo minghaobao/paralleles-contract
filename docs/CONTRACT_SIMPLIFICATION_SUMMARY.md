@@ -64,6 +64,38 @@
 - **现在**: `constructor()` - 无参数构造函数
 - **影响**: 部署时无需传递参数，后续通过 `setTreasuryAddress()` 和 `setGovernanceSafe()` 配置
 
+### 1.5 资金流向变更（重要）
+
+#### 架构变更
+- **之前**: `Meshes → FoundationManage → 收款方`
+- **现在**: `Meshes → MeshesTreasury → FoundationManage → 收款方`
+
+#### 变更原因
+1. **职责分离**: Treasury 层负责资金管理，FoundationManage 负责自动转账
+2. **安全性增强**: Treasury 层提供 Safe 多签保护
+3. **解耦设计**: Meshes 与 FoundationManage 不再直接耦合
+
+#### 变量和函数重命名
+| 变更类型 | 旧名称 | 新名称 |
+|---------|--------|--------|
+| 状态变量 | `FoundationAddr` | `treasuryAddress` |
+| 状态变量 | `pendingFoundationPool` | `pendingTreasuryPool` |
+| 函数 | `setFoundationAddress()` | `setTreasuryAddress()` |
+| 函数 | `payoutFoundationIfDue()` | `payoutTreasuryIfDue()` |
+| 事件 | `FoundationAddressUpdated` | `TreasuryAddressUpdated` |
+| 事件 | `FoundationPayout` | `TreasuryPayout` |
+
+#### 部署流程变更
+```solidity
+// 旧版本
+const meshes = await Meshes.deploy(foundationAddress, governanceSafeAddress);
+
+// 新版本
+const meshes = await Meshes.deploy();
+await meshes.setTreasuryAddress(treasuryAddress);
+await meshes.setGovernanceSafe(governanceSafeAddress);
+```
+
 ---
 
 ## 2. MeshesTreasury 合约变更
